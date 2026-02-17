@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Mu — Speaker View</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; background: #0f172a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+
+    .layout {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      height: 100%;
+      gap: 0;
+    }
+
+    /* --- Top bar --- */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 16px;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      font-size: 14px;
+    }
+    .topbar .slide-num { font-weight: 700; color: #60a5fa; font-size: 16px; }
+    .topbar .timer { font-variant-numeric: tabular-nums; color: #94a3b8; }
+
+    /* --- Main content --- */
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 8px;
+      padding: 8px;
+      min-height: 0;
+    }
+
+    .slide-panel {
+      position: relative;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .slide-panel iframe {
+      position: absolute;
+      top: 0; left: 0;
+      width: 1280px; height: 720px;
+      border: none;
+      transform-origin: top left;
+    }
+    .slide-label {
+      position: absolute;
+      top: 6px; left: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      z-index: 2;
+      background: rgba(15,23,42,0.7);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .notes-panel {
+      grid-column: 1 / -1;
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 16px 20px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      font-size: 15px;
+      line-height: 1.7;
+      color: #cbd5e1;
+    }
+    .notes-panel::-webkit-scrollbar { width: 6px; }
+    .notes-panel::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+
+    /* --- Bottom controls --- */
+    .controls {
+      display: flex;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #1e293b;
+      border-top: 1px solid #334155;
+    }
+    .controls button {
+      flex: 1;
+      padding: 16px;
+      font-size: 18px;
+      font-weight: 700;
+      font-family: 'Inter', system-ui, sans-serif;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .btn-prev { background: #334155; color: #e2e8f0; }
+    .btn-next { background: #2563eb; color: #fff; }
+    .btn-prev:active { background: #475569; }
+    .btn-next:active { background: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="topbar">
+      <span class="slide-num" id="slideNum">1 / 32</span>
+      <span class="timer" id="timer">00:00</span>
+    </div>
+
+    <div class="main">
+      <div class="slide-panel" id="currentPanel">
+        <span class="slide-label">Current</span>
+        <iframe id="currentSlide"></iframe>
+      </div>
+      <div class="slide-panel" id="nextPanel">
+        <span class="slide-label">Next</span>
+        <iframe id="nextSlide"></iframe>
+      </div>
+      <div class="notes-panel" id="notes">Loading notes...</div>
+    </div>
+
+    <div class="controls">
+      <button class="btn-prev" id="btnPrev">Previous</button>
+      <button class="btn-next" id="btnNext">Next</button>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // --- Scale iframes to fit their panels ---
+    function scaleIframes() {
+      ['currentPanel', 'nextPanel'].forEach(id => {
+        const panel = document.getElementById(id);
+        const iframe = panel.querySelector('iframe');
+        const scaleX = panel.clientWidth / 1280;
+        const scaleY = panel.clientHeight / 720;
+        const scale = Math.min(scaleX, scaleY);
+        iframe.style.transform = `scale(${scale})`;
+      });
+    }
+    window.addEventListener('resize', scaleIframes);
+
+    // --- Timer ---
+    const timerEl = document.getElementById('timer');
+    const startTime = Date.now();
+    setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const s = String(elapsed % 60).padStart(2, '0');
+      timerEl.textContent = `${m}:${s}`;
+    }, 1000);
+
+    // --- Wait for current slide iframe to load, then drive everything ---
+    const currentIframe = document.getElementById('currentSlide');
+    const nextIframe = document.getElementById('nextSlide');
+    const notesEl = document.getElementById('notes');
+    const slideNumEl = document.getElementById('slideNum');
+
+    // Load the presentation in both iframes
+    currentIframe.src = '/index.html?embedded=1';
+    nextIframe.src = '/index.html?embedded=1';
+
+    let currentReveal = null;
+    let nextReveal = null;
+    let totalSlides = 32;
+
+    currentIframe.addEventListener('load', () => {
+      scaleIframes();
+      const win = currentIframe.contentWindow;
+
+      // Wait for Reveal to be ready
+      const waitForReveal = setInterval(() => {
+        if (win.Reveal && win.Reveal.isReady()) {
+          clearInterval(waitForReveal);
+          currentReveal = win.Reveal;
+          totalSlides = currentReveal.getTotalSlides();
+
+          // Disable controls/progress in iframes (visual only)
+          currentReveal.configure({ controls: false, progress: false, showSlideNumber: false });
+
+          updateDisplay();
+
+          // Listen for changes (in case someone swipes the iframe directly)
+          currentReveal.on('slidechanged', updateDisplay);
+          currentReveal.on('fragmentshown', updateDisplay);
+          currentReveal.on('fragmenthidden', updateDisplay);
+        }
+      }, 100);
+    });
+
+    nextIframe.addEventListener('load', () => {
+      const win = nextIframe.contentWindow;
+      const waitForReveal = setInterval(() => {
+        if (win.Reveal && win.Reveal.isReady()) {
+          clearInterval(waitForReveal);
+          nextReveal = win.Reveal;
+          nextReveal.configure({ controls: false, progress: false, showSlideNumber: false });
+          updateDisplay();
+        }
+      }, 100);
+    });
+
+    function updateDisplay() {
+      if (!currentReveal) return;
+      const indices = currentReveal.getIndices();
+      const slide = currentReveal.getCurrentSlide();
+
+      // Update slide number
+      const slideNumber = currentReveal.getSlidePastCount() + 1;
+      slideNumEl.textContent = `${slideNumber} / ${totalSlides}`;
+
+      // Update notes
+      const notesElement = slide.querySelector('aside.notes');
+      notesEl.textContent = notesElement ? notesElement.textContent.trim() : '(no notes for this slide)';
+
+      // Update next slide iframe
+      if (nextReveal) {
+        if (!currentReveal.isLastSlide()) {
+          // Show the next state: if there are remaining fragments, show next fragment
+          const nextIndices = { ...indices };
+          if (currentReveal.availableFragments().next) {
+            nextIndices.f = (indices.f === undefined ? -1 : indices.f) + 1;
+          } else {
+            // Move to next slide
+            nextIndices.h = indices.h + 1;
+            nextIndices.v = 0;
+            nextIndices.f = undefined;
+          }
+          nextReveal.slide(nextIndices.h, nextIndices.v, nextIndices.f);
+        }
+      }
+
+      // Broadcast to audience via socket.io
+      if (socket && MULTIPLEX_SECRET) {
+        socket.emit('multiplex-statechanged', {
+          secret: MULTIPLEX_SECRET,
+          socketId: MULTIPLEX_ID,
+          indexh: indices.h,
+          indexv: indices.v,
+          indexf: indices.f,
+        });
+      }
+    }
+
+    // --- Navigation buttons ---
+    document.getElementById('btnPrev').addEventListener('click', () => {
+      if (currentReveal) { currentReveal.prev(); updateDisplay(); }
+    });
+    document.getElementById('btnNext').addEventListener('click', () => {
+      if (currentReveal) { currentReveal.next(); updateDisplay(); }
+    });
+
+    // --- Swipe gestures on the notes panel ---
+    let touchStartX = 0;
+    const notesPanel = document.getElementById('notes');
+    notesPanel.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; }, { passive: true });
+    notesPanel.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 60) {
+        if (dx < 0 && currentReveal) { currentReveal.next(); updateDisplay(); }
+        if (dx > 0 && currentReveal) { currentReveal.prev(); updateDisplay(); }
+      }
+    }, { passive: true });
+
+    // --- Socket.io multiplex ---
+    const MULTIPLEX_SECRET = window.MULTIPLEX_SECRET || '';
+    const MULTIPLEX_ID = window.MULTIPLEX_ID || '';
+    const socket = (MULTIPLEX_ID) ? io() : null;
+  </script>
+</body>
+</html>
