@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mu – Microsecond Consensus for Microsecond Applications</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css" id="theme">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="reveal">
+    <div class="slides">
+
+      <!-- ==================== 1. TITLE ==================== -->
+      <section class="title-slide" data-background-gradient="linear-gradient(135deg, #0f172a 0%, #1e3a5f 55%, #1e40af 100%)">
+        <h1>μ (Mu)</h1>
+        <p class="subtitle">Microsecond Consensus for Microsecond Applications</p>
+        <p class="authors">
+          Marcos K. Aguilera &middot; Naama Ben-David &middot; Rachid Guerraoui<br>
+          Virendra Marathe &middot; Athanasios Xygkis &middot; Igor Zablotchi
+        </p>
+        <p class="venue">OSDI 2020</p>
+      </section>
+
+      <!-- ==================== 2. THE PROBLEM ==================== -->
+      <section>
+        <h2>The Problem</h2>
+        <p>Modern applications do useful work in <strong>microseconds</strong>,
+           but fault tolerance adds orders of magnitude more.</p>
+        <div class="stats">
+          <div class="stat stat-blue">
+            <div class="val">10–100s μs</div>
+            <div class="lbl">SMR replication overhead</div>
+          </div>
+          <div class="stat stat-amber">
+            <div class="val">10–100s ms</div>
+            <div class="lbl">Traditional failover time</div>
+          </div>
+        </div>
+        <div class="callout callout-blue">
+          At microsecond scale, the "overhead" <em>is</em> the entire latency budget.<br>
+          <strong>You can't just shave cycles — you need a fundamentally different lever.</strong>
+        </div>
+      </section>
+
+      <!-- ==================== 3. MOTIVATION ==================== -->
+      <section>
+        <h2>Where Microseconds Matter</h2>
+        <ul>
+          <li><strong>Financial trading</strong> — microseconds = money. Replication delay is a direct competitive disadvantage.</li>
+          <li><strong>Embedded control</strong> — microseconds = safety. Real-time loops demand ultra-low-latency replication.</li>
+          <li><strong>Microservices</strong> — latency compounds across large service graphs. Stateful components (KV stores) sit on critical paths.</li>
+        </ul>
+        <div class="callout callout-amber">
+          If replication adds several microseconds or failover takes milliseconds, it becomes either a
+          <strong>competitive disadvantage</strong> or something <strong>dismissed as unavoidable</strong>.
+        </div>
+      </section>
+
+      <!-- ==================== 4. SMR BACKGROUND ==================== -->
+      <section>
+        <h2>State Machine Replication (SMR)</h2>
+        <ul>
+          <li>Each replica keeps a <strong>copy of the application</strong> + a <strong>log of requests</strong></li>
+          <li>Leader orders requests, replicates to a <strong>majority</strong>, replicas apply in order</li>
+          <li>Majority intersection → no two different values both "committed" for the same slot</li>
+          <li>Provides <strong>linearizability</strong>: the service behaves as one copy</li>
+        </ul>
+        <div class="callout callout-blue">
+          <strong>Classic Paxos</strong> uses increasing proposal numbers and a two-phase protocol
+          (prepare → accept) with follower responses on the critical path. Each step costs microseconds.
+        </div>
+      </section>
+
+      <!-- ==================== 5. RDMA BACKGROUND ==================== -->
+      <section>
+        <h2>RDMA: The Lever</h2>
+        <ul>
+          <li><strong>One-sided operations</strong> (Write, Read) bypass the remote CPU entirely</li>
+          <li><strong>Memory Region (MR)</strong> — registered user memory with configurable access flags</li>
+          <li><strong>Queue Pair (QP)</strong> — endpoint with state machine (RESET → INIT → RTR → RTS) and access flags</li>
+          <li><strong>Reliable Connection (RC)</strong> — reliable, in-order delivery between QP pairs</li>
+        </ul>
+        <div class="callout callout-green">
+          <strong>Key</strong>: Permissions are <em>hardware-enforced</em> by the NIC and can be changed
+          dynamically. A remote RDMA write succeeds or fails based on QP/MR permission state.
+        </div>
+      </section>
+
+      <!-- ==================== 6. MU'S KEY INSIGHT ==================== -->
+      <section>
+        <h2>Mu's Two Core Ideas</h2>
+        <div class="two-col">
+          <div>
+            <h3>① Silent Followers</h3>
+            <p>Leader replicates via <strong>one-sided RDMA writes</strong> into follower logs.
+               Followers do <strong>zero network communication</strong> on the fast path.</p>
+          </div>
+          <div>
+            <h3>② Permission = Safety</h3>
+            <p>RDMA write permissions as <strong>split-brain prevention</strong>.
+               Each replica grants write access to <strong>exactly one leader</strong> at a time.</p>
+          </div>
+        </div>
+        <div class="callout callout-blue">
+          "A competing leader's writes <strong>literally fail</strong> because it doesn't have permission."
+          This replaces Paxos proposal numbers with <strong>hardware-enforced access control</strong>.
+        </div>
+      </section>
+
+      <!-- ==================== ARCHITECTURE ==================== -->
+      <section>
+        <h2>Two-Plane Architecture</h2>
+        <img src="img/architecture.png" class="r-stretch">
+        <p class="caption">Replication plane (fast path, one-sided RDMA writes) and Background plane
+           (elections, permissions, catch-up) run on separate threads, QPs, and MRs.</p>
+      </section>
+
+      <!-- ==================== 8. THE BACKGROUND PLANE ==================== -->
+      <section>
+        <h2>The Background Plane</h2>
+        <p>While the replication plane is optimized for speed, the background plane handles
+           <strong>everything else</strong> — on separate threads, QPs, and MRs for isolation.</p>
+        <div class="two-col">
+          <div>
+            <h3>Responsibilities</h3>
+            <ul>
+              <li><strong>Failure detection</strong> — pull-score heartbeat monitoring via RDMA reads</li>
+              <li><strong>Leader election</strong> — deterministic rule: lowest-ID replica considered alive</li>
+              <li><strong>Permission management</strong> — revoke/grant RDMA write access during leader transitions</li>
+              <li><strong>Catch-up &amp; recovery</strong> — synchronize lagging or recovering replicas</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Why Separate?</h3>
+            <ul>
+              <li>Background work must <strong>never block</strong> the fast-path replication thread</li>
+              <li>Separate QPs prevent control-plane RDMA ops from queuing behind data-plane writes</li>
+              <li>Separate MRs prevent permission changes on the background region from
+                  disrupting replication MR access</li>
+            </ul>
+            <div class="callout callout-green" style="margin-top:12px;">
+              Isolation by design — not an optimization, but a correctness requirement at μs scale.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 9. SECTION: NORMAL OPERATION ==================== -->
+      <section class="section-slide" data-background-gradient="linear-gradient(135deg, #1e293b 0%, #334155 100%)">
+        <p class="section-num">Part I</p>
+        <h2>Normal Operation</h2>
+        <p class="section-desc">The fast path when everyone agrees on the leader</p>
+      </section>
+
+      <!-- ==================== 9. FAST PATH ==================== -->
+      <section>
+        <h2>The Fast Path</h2>
+        <div class="two-col">
+          <div>
+            <ol>
+              <li>Client request intercepted by <strong>capture shim</strong> at the leader</li>
+              <li>Leader appends to its local log</li>
+              <li>Leader <strong>RDMA-writes</strong> entry to each follower's log</li>
+              <li>Majority replicated → execute, respond, and <strong>inject</strong> into replicas for replay</li>
+            </ol>
+            <div class="callout callout-green">
+              Reaches the <strong>practical lower bound</strong> of what RDMA hardware can do
+              for replication — one "one-sided round."
+            </div>
+          </div>
+          <div class="text-center">
+            <img src="img/normal_timeline.png" style="max-height: 380px;">
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 9b. ANIMATION: REPLICATION IN ACTION ==================== -->
+      <section>
+        <h2 style="margin-bottom:0.1em;font-size:1.15em;">Replication in Action</h2>
+        <svg id="mu-anim" viewBox="0 0 960 510" class="r-stretch" style="max-width:100%;">
+          <defs>
+            <marker id="arr-b" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="9" markerHeight="7" orient="auto-start-reverse"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
+            <marker id="arr-g" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="9" markerHeight="7" orient="auto-start-reverse"><polygon points="0 0,10 3.5,0 7" fill="#059669"/></marker>
+          </defs>
+
+          <!-- ===== STATIC: Client ===== -->
+          <rect x="405" y="5" width="150" height="48" rx="10" fill="#f0fdf4" stroke="#059669" stroke-width="1.5"/>
+          <text x="480" y="35" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="15" font-weight="600" fill="#065f46">Client</text>
+
+          <!-- ===== STATIC: Leader (R₁) ===== -->
+          <rect x="240" y="88" width="480" height="152" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+          <text x="480" y="109" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="700" fill="#1e40af">Leader (R₁)</text>
+          <!-- CPU/App -->
+          <rect x="270" y="122" width="120" height="46" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
+          <text x="330" y="150" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#1d4ed8">CPU / App</text>
+          <!-- Log -->
+          <text x="548" y="118" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" fill="#64748b">Log (Memory Region)</text>
+          <rect x="445" y="128" width="50" height="36" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="500" y="128" width="50" height="36" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="555" y="128" width="50" height="36" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="610" y="128" width="50" height="36" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+
+          <!-- ===== STATIC: Follower R₂ ===== -->
+          <rect x="40" y="320" width="390" height="130" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="235" y="341" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="700" fill="#475569">Follower (R₂)</text>
+          <rect x="65" y="356" width="100" height="42" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+          <text x="115" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" fill="#94a3b8">CPU</text>
+          <text x="290" y="352" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" fill="#94a3b8">Log</text>
+          <rect x="195" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="246" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="297" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="348" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+
+          <!-- ===== STATIC: Follower R₃ ===== -->
+          <rect x="530" y="320" width="390" height="130" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="725" y="341" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="14" font-weight="700" fill="#475569">Follower (R₃)</text>
+          <rect x="555" y="356" width="100" height="42" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+          <text x="605" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" fill="#94a3b8">CPU</text>
+          <text x="780" y="352" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" fill="#94a3b8">Log</text>
+          <rect x="685" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="736" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="787" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+          <rect x="838" y="360" width="46" height="34" rx="4" fill="#f8fafc" stroke="#cbd5e1"/>
+
+          <!-- ===== STEP 1: Client sends request ===== -->
+          <g class="fragment" data-fragment-index="1">
+            <line x1="480" y1="53" x2="480" y2="86" stroke="#059669" stroke-width="2.5" marker-end="url(#arr-g)"/>
+            <text x="522" y="73" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#059669">request</text>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#065f46">① Client sends request to the leader</text>
+          </g>
+
+          <!-- ===== STEP 2: Leader appends to local log ===== -->
+          <g class="fragment" data-fragment-index="2">
+            <line x1="390" y1="145" x2="440" y2="145" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-b)"/>
+            <rect x="446" y="129" width="48" height="34" rx="3" fill="#3b82f6"/>
+            <text x="470" y="151" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="700" fill="#fff">v₁</text>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#1e40af">② Leader appends entry to its local log</text>
+          </g>
+
+          <!-- ===== STEP 3: One-sided RDMA writes ===== -->
+          <g class="fragment" data-fragment-index="3">
+            <path class="rdma-path" d="M 370 240 C 340 285 275 320 225 358" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-dasharray="10 6" marker-end="url(#arr-b)"/>
+            <path class="rdma-path" d="M 590 240 C 620 285 680 320 720 358" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-dasharray="10 6" marker-end="url(#arr-b)"/>
+            <text x="275" y="278" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#2563eb" transform="rotate(-32 275 278)">RDMA Write</text>
+            <text x="670" y="278" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#2563eb" transform="rotate(28 670 278)">RDMA Write</text>
+            <!-- CPU bypass overlays -->
+            <rect x="65" y="356" width="100" height="42" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+            <text x="115" y="374" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" font-weight="700" fill="#dc2626">CPU idle</text>
+            <text x="115" y="390" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#ef4444">✗ not involved</text>
+            <rect x="555" y="356" width="100" height="42" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+            <text x="605" y="374" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" font-weight="700" fill="#dc2626">CPU idle</text>
+            <text x="605" y="390" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="9" fill="#ef4444">✗ not involved</text>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#1e40af">③ One-sided RDMA writes to follower logs — follower CPUs not involved</text>
+          </g>
+
+          <!-- ===== STEP 4: Majority committed ===== -->
+          <g class="fragment" data-fragment-index="4">
+            <rect x="196" y="361" width="44" height="32" rx="3" fill="#3b82f6"/>
+            <text x="218" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#fff">v₁</text>
+            <rect x="686" y="361" width="44" height="32" rx="3" fill="#3b82f6"/>
+            <text x="708" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="700" fill="#fff">v₁</text>
+            <rect x="370" y="260" width="220" height="34" rx="17" fill="#059669"/>
+            <text x="480" y="282" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="700" fill="#fff">✓ Majority Committed!</text>
+            <text x="480" y="304" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="#059669">~1.3 μs total</text>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#ecfdf5" stroke="#a7f3d0"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#065f46">④ Entry replicated on a majority — committed in ~1.3 μs</text>
+          </g>
+
+          <!-- ===== STEP 5: Leader responds ===== -->
+          <g class="fragment" data-fragment-index="5">
+            <line x1="440" y1="88" x2="440" y2="55" stroke="#059669" stroke-width="2.5" marker-end="url(#arr-g)"/>
+            <text x="425" y="74" text-anchor="end" font-family="Inter,system-ui,sans-serif" font-size="11" font-weight="600" fill="#059669">response</text>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#f0fdf4" stroke="#bbf7d0"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#065f46">⑤ Leader executes request and responds to client</text>
+          </g>
+
+          <!-- ===== STEP 6: Followers replay ===== -->
+          <g class="fragment" data-fragment-index="6">
+            <rect x="65" y="356" width="100" height="42" rx="8" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="115" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" font-weight="700" fill="#1d4ed8">Replaying ▶</text>
+            <line x1="192" y1="377" x2="170" y2="377" stroke="#3b82f6" stroke-width="2" marker-end="url(#arr-b)"/>
+            <rect x="555" y="356" width="100" height="42" rx="8" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+            <text x="605" y="381" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="10" font-weight="700" fill="#1d4ed8">Replaying ▶</text>
+            <line x1="682" y1="377" x2="660" y2="377" stroke="#3b82f6" stroke-width="2" marker-end="url(#arr-b)"/>
+            <rect x="130" y="468" width="700" height="28" rx="8" fill="#eff6ff" stroke="#bfdbfe"/>
+            <text x="480" y="487" text-anchor="middle" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#1e40af">⑥ Followers independently observe new entries and replay</text>
+          </g>
+        </svg>
+      </section>
+
+      <!-- ==================== 10. DATA STRUCTURES ==================== -->
+      <section>
+        <h2>Per-Replica Data Structures</h2>
+        <div class="two-col">
+          <div class="text-center">
+            <img src="img/structures.png" style="max-height: 380px;">
+          </div>
+          <div>
+            <ul>
+              <li><strong>Log</strong>: registered memory (MR), writable only by current leader via RDMA</li>
+              <li><strong>FUO</strong> (First Undecided Offset): lowest undecided index</li>
+              <li><strong>Per-slot</strong>: (proposal number, value) tuple</li>
+              <li><strong>Canary byte</strong>: at end of each entry, non-zero when written</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 11. MAKING IT CORRECT ==================== -->
+      <section>
+        <h2>Making It Actually Correct</h2>
+        <ul>
+          <li><strong>Canary byte</strong> — leader sets non-zero when writing; follower checks before trusting.
+              Prevents reading half-written RDMA entries.</li>
+          <li><strong>Commit piggybacking</strong> — the next write serves as commit signal for the previous slot.
+              No explicit "chosen" message needed.</li>
+          <li><strong>Log recycling</strong> — circular log reuses entries once all replicas have applied them</li>
+          <li><strong>Prepare omission</strong> — if only empty slots seen on confirmed followers, skip the
+              prepare phase entirely. Common-case cost → <strong>just one-sided RDMA writes</strong>.</li>
+        </ul>
+      </section>
+
+      <!-- ==================== 12. SECTION: SAFETY ==================== -->
+      <section class="section-slide" data-background-gradient="linear-gradient(135deg, #1e293b 0%, #334155 100%)">
+        <p class="section-num">Part II</p>
+        <h2>Safety &amp; Leader Change</h2>
+        <p class="section-desc">Preventing split-brain, detecting failure, and recovering — at microsecond speed</p>
+      </section>
+
+      <!-- ==================== 13. SPLIT-BRAIN ==================== -->
+      <section>
+        <h2>Why Concurrent Leaders Are Dangerous</h2>
+        <div class="two-col">
+          <div>
+            <h3>Classic Approach</h3>
+            <ul>
+              <li>Extra message rounds</li>
+              <li>Follower promises ("won't accept lower proposals")</li>
+              <li>Each round = more μs on the critical path</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Mu's Approach</h3>
+            <ul>
+              <li>Make unauthorized writes <strong>physically impossible</strong></li>
+              <li>Not "followers promise" but <strong>"the NIC rejects the write"</strong></li>
+              <li>Safety via hardware access control</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout callout-red">
+          The hardest part of consensus isn't the normal case — it's preventing split-brain and races
+          during failure suspicion, network jitter, or delayed scheduling.
+        </div>
+      </section>
+
+      <!-- ==================== PERMISSION-BASED SAFETY ==================== -->
+      <section>
+        <h2>Permission-Based Safety</h2>
+        <div class="two-col">
+          <div>
+            <h3>The Invariant</h3>
+            <ul>
+              <li>Each replica grants RDMA write permission on its log to <strong>exactly one leader</strong> at a time</li>
+              <li>Hardware enforced: unauthorized RDMA writes <strong>silently fail</strong> at the NIC</li>
+              <li>Not "followers promise" — <strong>the NIC rejects the write</strong></li>
+            </ul>
+            <h3 style="margin-top:0.6em;">How Permissions Change</h3>
+            <ol>
+              <li>Would-be leader writes a <strong>permission request</strong> into the target replica's
+                  background-plane MR (one-sided RDMA)</li>
+              <li>Log owner: <strong>revokes</strong> from current holder, <strong>grants</strong> to requester</li>
+              <li>Multiple requesters processed <strong>one by one, ordered by replica ID</strong></li>
+              <li>Only after revoke+grant → replica joins <code>confirmedFollowers</code></li>
+            </ol>
+          </div>
+          <div>
+            <h3>Key Properties</h3>
+            <ul>
+              <li>Each replica has a <strong>permission request array</strong> in its background-plane MR</li>
+              <li>Processing order by ID is <strong>deterministic</strong> — no races between competing candidates</li>
+              <li>Old leader's in-flight RDMA writes <strong>silently fail</strong> after revocation — they simply don't land</li>
+              <li>The permission switch itself is the <strong>dominant cost</strong> of failover (hundreds of μs)</li>
+            </ul>
+            <div class="callout callout-red" style="margin-top:12px;">
+              This replaces Paxos proposal numbers with <strong>hardware access control</strong>.
+              Safety is enforced by the NIC, not by protocol messages.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 16. CONSENSUS PROTOCOL ==================== -->
+      <section>
+        <h2>Confirmed Followers &amp; The Protocol</h2>
+        <p><code>confirmedFollowers</code>: replicas that granted <strong>exclusive write permission</strong> to this leader.</p>
+        <ul>
+          <li><strong>Prepare-like</strong>: RDMA-read <code>minProposal</code> from confirmed followers,
+              write higher number, read slot at FUO</li>
+          <li><strong>Accept-like</strong>: RDMA-write <code>(proposal, value)</code> into FUO slot on
+              confirmed followers</li>
+        </ul>
+        <div class="callout callout-green">
+          <strong>Key optimization</strong>: once a leader sees only empty slots at FUO, it
+          <strong>omits the prepare phase</strong> for subsequent indices.
+          Common-case cost = <strong>just one-sided RDMA writes</strong>.
+        </div>
+      </section>
+
+      <!-- ==================== PULL-SCORE ==================== -->
+      <section>
+        <h2>Pull-Score Failure Detection</h2>
+        <div class="two-col">
+          <div>
+            <h3>Traditional (Push)</h3>
+            <ul>
+              <li>Leader pushes heartbeats</li>
+              <li>Network jitter delays messages</li>
+              <li>→ False positives or large timeouts</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Mu (Pull-Score)</h3>
+            <ul>
+              <li>Followers <strong>RDMA-read</strong> leader's counter</li>
+              <li>Score: +1 if unchanged, −1 if changed</li>
+              <li>Bounded [0, 15]; fail = 2, recover = 6</li>
+              <li>Delay → slower scoring, not sudden gaps</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout callout-blue">
+          <strong>Two-layer design</strong>: small pull-score threshold for common failures
+          (brief stalls, scheduling delays) + longer connection-level timeout for major
+          disruptions (network breakage, machine crash). Hysteresis prevents oscillation
+          and enables aggressive detection without spurious leader changes.
+        </div>
+      </section>
+
+      <!-- ==================== 18. ELECTION ==================== -->
+      <section>
+        <h2>Leader Election &amp; Fate Sharing</h2>
+        <ul>
+          <li><strong>Policy</strong>: leader = lowest-ID replica considered alive
+            <ul><li>Deterministic given "alive" set — no explicit voting needed</li></ul>
+          </li>
+          <li><strong>Fate sharing</strong>: election thread monitors replication activity
+            <ul>
+              <li>If replication stuck → leader stops heartbeat → triggers replacement</li>
+              <li>Prevents: healthy election thread + stuck replication = silent stall</li>
+            </ul>
+          </li>
+        </ul>
+        <div class="callout callout-amber">
+          Microsecond behavior is often dominated by engineering pathologies, not algorithmic complexity.
+          Fate sharing is a practical fix for a real systems problem.
+        </div>
+      </section>
+
+      <!-- ==================== 19. LEADER CHANGE ==================== -->
+      <section>
+        <h2>Leader Change Process</h2>
+        <div class="two-col">
+          <div>
+            <ol>
+              <li>Failure detected → local leader rule activates</li>
+              <li>New leader <strong>requests permissions</strong> via background plane</li>
+              <li>Each follower: <strong>revoke</strong> old, <strong>grant</strong> new</li>
+              <li><strong>Catch-up</strong>: copy from most advanced follower</li>
+              <li><strong>Update</strong>: push missing entries to lagging replicas</li>
+            </ol>
+          </div>
+          <div class="text-center">
+            <img src="img/newleader.png" style="max-height: 380px;">
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== EDGE CASES DURING LEADER CHANGE ==================== -->
+      <section>
+        <h2>Edge Cases During Leader Change</h2>
+        <div class="two-col">
+          <div>
+            <h3>What Can Go Wrong</h3>
+            <ul>
+              <li><strong>Old leader still alive</strong> — may try to write after being suspected.
+                  Its RDMA writes <em>silently fail</em> once permissions are revoked.</li>
+              <li><strong>Competing candidates</strong> — multiple replicas suspect the leader simultaneously.
+                  Permission manager processes requests <strong>one by one, ordered by replica ID</strong>,
+                  ensuring only one wins.</li>
+              <li><strong>Partially replicated entries</strong> — old leader wrote to some followers but not a majority.
+                  New leader's prepare phase discovers and resolves these via RDMA reads.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Why It Stays Safe</h3>
+            <ul>
+              <li><code>confirmedFollowers</code> = replicas that <strong>revoked</strong> old leader
+                  and <strong>granted</strong> new leader</li>
+              <li>New leader only operates on confirmed followers — guaranteed no concurrent writer</li>
+              <li>Prepare phase reads slot state to recover any in-flight proposals before proceeding</li>
+            </ul>
+            <div class="callout callout-green" style="margin-top:12px;">
+              Safety doesn't rely on timing or promises — it's enforced by
+              <strong>hardware permission state</strong> at the NIC level.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== CATCH-UP & RECOVERY ==================== -->
+      <section>
+        <h2>Catch-Up &amp; Log Recovery</h2>
+        <div class="two-col">
+          <div>
+            <h3>New Leader Catch-Up</h3>
+            <ol>
+              <li>RDMA-read FUO from each confirmed follower</li>
+              <li>Copy missing entries from the <strong>most advanced follower</strong> (highest FUO)</li>
+              <li>Push missing entries to <strong>lagging followers</strong> and align their FUOs</li>
+            </ol>
+            <div class="callout callout-blue" style="margin-top:12px;">
+              Without catch-up, any replica outside the confirmed set would drift forever.
+              This is what makes Mu a <strong>complete SMR system</strong> — not just a fast-path trick.
+            </div>
+          </div>
+          <div>
+            <h3>Circular Log Recycling</h3>
+            <ul>
+              <li>Each follower tracks a <strong>log-head</strong> pointer (first entry not yet applied)</li>
+              <li>Leader RDMA-reads all heads, computes <code>minHead</code></li>
+              <li>Entries below minHead safely <strong>zeroed and reused</strong></li>
+              <li>Zeroing is critical: canary byte relies on empty entries being distinguishable from written ones</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 21. PERMISSION MECHANISMS ==================== -->
+      <section>
+        <h2>Permission Switch Mechanisms</h2>
+        <p>Changing RDMA permissions is far slower than ordinary RDMA operations:</p>
+        <div style="margin: 14px 0;">
+          <div class="bar-row">
+            <span class="bar-lbl">QP Access Flags</span>
+            <div class="bar-track"><div class="bar-fill blue" style="width: 8%;">~88 μs</div></div>
+          </div>
+          <div class="bar-row">
+            <span class="bar-lbl">QP State Cycle</span>
+            <div class="bar-track"><div class="bar-fill amber" style="width: 25%;">~1,216 μs</div></div>
+          </div>
+          <div class="bar-row">
+            <span class="bar-lbl">MR Re-register</span>
+            <div class="bar-track"><div class="bar-fill red" style="width: 95%;">350–56,700 μs</div></div>
+          </div>
+        </div>
+        <div class="callout callout-amber">
+          Mu: try QP Flags first (fast, but can error if ops in-flight), fall back to QP State Cycle.
+          MR Re-register scales disastrously with region size — a <strong>NIC control-plane bottleneck</strong>.
+        </div>
+      </section>
+
+      <!-- ==================== 21. SECTION: EVALUATION ==================== -->
+      <section class="section-slide" data-background-gradient="linear-gradient(135deg, #1e293b 0%, #334155 100%)">
+        <p class="section-num">Part III</p>
+        <h2>Evaluation</h2>
+        <p class="section-desc">4-node cluster · 100 Gbps InfiniBand · 3-way replication</p>
+      </section>
+
+      <!-- ==================== 22. REPLICATION LATENCY ==================== -->
+      <section>
+        <h2>Replication Latency</h2>
+        <img src="img/exp2_replication.png" class="r-stretch">
+        <p class="caption">~1.3 μs median, ~1.6 μs p99. Faster by multiples than Hermes, DARE, APUS — with much tighter tail latency.</p>
+      </section>
+
+      <!-- ==================== 23. STANDALONE VS ATTACHED ==================== -->
+      <section>
+        <h2>Standalone vs. Attached Performance</h2>
+        <img src="img/exp1_usvsus.png" class="r-stretch">
+        <p class="caption">Shared-core mode adds ~400ns cache-coherence penalty per request. At μs scale, thread/core topology is a first-order design choice.</p>
+      </section>
+
+      <!-- ==================== 24. E2E LATENCY ==================== -->
+      <section>
+        <h2>End-to-End Application Latency</h2>
+        <img src="img/exp3_e2e.png" class="r-stretch">
+        <p class="caption">Mu integrates via a capture/inject shim. Liquibook: 4.08 → 5.55 μs (+35%). HERD: 2.25 → 3.59 μs. Redis/Memcached: +1.5 μs negligible at ~115 μs base. For true μs apps, Mu is the only viable option.</p>
+      </section>
+
+      <!-- ==================== 25. FAILOVER ==================== -->
+      <section>
+        <h2>Failover Performance</h2>
+        <img src="img/failover_histogram.png" class="r-stretch">
+        <p class="caption">873 μs median failover — sub-millisecond. Permission switch is the dominant cost. Orders of magnitude faster than traditional SMR failover.</p>
+      </section>
+
+      <!-- ==================== 26. THROUGHPUT ==================== -->
+      <section>
+        <h2>Latency vs. Throughput</h2>
+        <img src="img/exp7_latthru.png" class="r-stretch">
+        <p class="caption">Mu maintains low latency under increasing throughput, comparing favorably against baseline systems across both dimensions.</p>
+      </section>
+
+      <!-- ==================== 27. ACHIEVEMENTS ==================== -->
+      <section>
+        <h2>What Mu Achieves</h2>
+        <div class="stats">
+          <div class="stat stat-blue">
+            <div class="val">~1.3 μs</div>
+            <div class="lbl">Replication (median)</div>
+          </div>
+          <div class="stat stat-green">
+            <div class="val">873 μs</div>
+            <div class="lbl">Failover (median)</div>
+          </div>
+        </div>
+        <ul>
+          <li><strong>Near RDMA lower bound</strong> — common case = one round of one-sided writes</li>
+          <li><strong>Linearizability</strong> — strong consistency via hardware-enforced single-writer permissions</li>
+          <li><strong>Real application integration</strong> — Liquibook, HERD, Redis, Memcached</li>
+          <li><strong>Complete SMR</strong> — leader change, log recycling, catch-up; not just a fast-path trick</li>
+        </ul>
+      </section>
+
+      <!-- ==================== 28. LIMITATIONS ==================== -->
+      <section>
+        <h2>Limitations &amp; Open Questions</h2>
+        <ul>
+          <li><strong>RDMA required</strong> — targets datacenter/LAN environments, not WAN deployments</li>
+          <li><strong>In-memory only</strong> — no durable logging; persistent memory mentioned as future direction</li>
+          <li><strong>Permission switch cost</strong> — hundreds of μs on current NICs; a control-plane bottleneck</li>
+          <li><strong>Hardware assumptions</strong> — canary scheme relies on NIC/NUMA ordering; checksum alternative adds cost</li>
+        </ul>
+        <div class="callout callout-amber">
+          Mu shifts work from the network data plane to the RDMA control plane. The fast path is
+          microseconds — but the slow path remains bounded by what NIC firmware and drivers optimize for.
+        </div>
+      </section>
+
+      <!-- ==================== 29. BIGGER PICTURE ==================== -->
+      <section>
+        <h2>The Bigger Picture</h2>
+        <ul>
+          <li><strong>Key contribution</strong>: treating RDMA's access control as a <em>distributed systems primitive</em>
+              — not just faster transport, but a new safety mechanism</li>
+          <li><strong>Pull-score detection</strong> confronts the practical truth that μs failover is dominated by jitter sensitivity</li>
+          <li><strong>After Mu</strong>: Acuerdo (ICPP 2022), NetLR (VLDB 2022), Nezha (VLDB 2023),
+              persistent-memory replication (OSDI 2023)</li>
+          <li><strong>Active trends</strong>: in-network / SmartNIC-assisted replication, moving protocol logic
+              into programmable network devices</li>
+        </ul>
+        <div class="callout callout-green">
+          Mu demonstrates that near-microsecond SMR is feasible — and simultaneously exposes the
+          <strong>next bottlenecks</strong>: permission-switch control-plane costs, durability,
+          and broader deployment models.
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+  <script src="slides.js"></script>
+</body>
+</html>

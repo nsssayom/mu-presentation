@@ -1,0 +1,14 @@
+\begin{abstract}
+We consider the problem of making apps fault-tolerant through replication, when apps operate at the microsecond scale, as in finance, embedded computing, and microservices apps. These apps need a replication scheme that also operates at the microsecond scale, otherwise replication becomes a burden. We propose \sysname, a system that takes less than 1.3 microseconds to replicate a (small) request in memory, and less than a millisecond
+%\igor{median failover is 873, 99-percentile is 947. Which one should we mention?} 
+to fail-over the system---this cuts the replication and fail-over latencies of the
+prior systems by at least 61\% and 90\%.
+ \sysname implements bona fide state machine replication/consensus (SMR) with strong consistency for a generic app, but it really shines on microsecond apps, where even the smallest overhead is significant. To provide this performance, \sysname introduces a new SMR protocol that carefully leverages RDMA. Roughly, in \sysname a leader replicates a request by simply writing it directly to the log of other replicas using RDMA, without any additional communication. Doing so, however, introduces the challenge of handling concurrent leaders, changing leaders, garbage collecting the logs, and more---challenges that we address in this paper through a judicious combination of RDMA permissions and distributed algorithmic design.
+We implemented \sysname and used it to replicate several
+  systems: a financial exchange app called Liquibook,
+  \redis{}, \memcached{},
+  and HERD~\cite{kalia2014using}.
+Our evaluation shows that \sysname incurs a small replication latency, in some
+  cases being the only viable replication system that incurs an acceptable overhead.
+%Our evaluation shows that \sysname outperforms competing RDMA-based SMR systems DARE and APUS by $2.4\times$ to $6\times$.
+\end{abstract}

@@ -1,0 +1,182 @@
+\section{Background Plane} \label{sec:protocol}
+
+The background plane has two main roles: electing and monitoring the leader, and handling permission change requests. In this section, we describe these mechanisms.
+
+\subsection{Leader Election} \label{sec:leader}
+
+The \textit{leader election component} of the background plane maintains an estimate of the current leader, which it continually updates. The replication plane uses this estimate to determine whether to execute as leader or follower. 
+
+Each replica independently and locally decides who it considers to be leader. We opt for a simple rule: replica $i$ decides that $j$ is leader if $j$ is the replica with the lowest id, among those that $i$ considers to be alive.
+
+%\footnote{In theory, this rule can lead to situations in which multiple nodes consider themselves leader, with no leader able to command a majority of the replicas. This can occur, for instance, in networks in which latency is non-uniform. However, in the datacenter scenarios that we target, we can assume a reasonably uniform network latency.}
+
+% Each \node{} $p$ has a variable \texttt{leader} that stores the id of the \node{} that $p$ currently believes
+%   to be the leader. 
+% The \emph{leader election component} of the background plane writes this variable when it elects a new leader. The replication plane reads this variable to determine whether to act as a leader
+%   (in this case \texttt{leader} contains the \node's own id) or a follower (otherwise).
+   
+   
+% For leader election, the ids of \node{s} are used as a priority order for leadership.
+% All \node{s} begin with \node{} $0$ as their leader. They all switch to \node{} $1$ if they suspect \node{} $0$ of failing, and so on. 
+
+To know whether a \node{} has failed, we employ a \emph{pull-score} mechanism, based on a \textit{local heartbeat} counter. A leader election thread continually increments its own counter locally and uses RDMA Reads to read the counters (heartbeats) of other \node{s} and check whether they have been updated. It maintains a \emph{score} for every other \node. If a \node{} has updated its counter since the last time it was read, we increment that \node{'s} score; otherwise, we decrement it. \CR{The score is capped by configurable minimum and maximum values, chosen experimentally to  be $0$ and $15$, respectively.} Once a \node{'s} score drops below a \textit{failure threshold}, we consider it to have failed; if its score goes above a \textit{recovery threshold}, we consider it to be active and timely. To avoid oscillation, we have different \textit{failure} and \textit{recovery} thresholds, \CR{chosen experimentally to be $2$ and $6$,} respectively, so as to avoid false positives.
+
+
+\paragraph{Large network delays.} 
+\CR{Mu employs two timeouts: a small timeout in our detection algorithm (scoring), and a longer timeout built into the RDMA connection mechanism.
+The small timeout detects crashes quickly under common failures (process crashes, host crashes) without false positives.
+The longer RDMA timeout fires only under larger network delays (connection breaks, counter-read failures).
+In theory, the RDMA timeout could use exponential back-off to handle unknown delay bounds.
+In practice, however, that is not necessary, since we target datacenters with small delays.
+}
+
+
+\paragraph{Fate sharing.}
+\CR{
+Because replication and leader election run in independent threads,
+the replication thread could fail or be delayed, while the leader election thread remains active and timely.
+This scenario is problematic if it occurs on a leader, as
+the leader cannot commit new entries, and no other leader can be elected. 
+%
+To address thie problem, every $X{=}10000$ iterations, the leader election thread checks the replication thread for activity; if the replication thread is stuck inside a call to \texttt{propose}, the replication thread stops incrementing the local counter, to allow a new leader to be elected.
+}
+
+
+% Of the \node{s} that have updated their heartbeat since the last time it was read, the \node{} with the minimum id is chosen as leader. This failure detection mechanism is run periodically, every $k$ microseconds. The exact amount of time between iterations ($k$) is tunable. There is a tradeoff between \emph{stability} and \emph{recovery time} when picking $k$: a small $k$ translates to faster replacement of a leader that fails, but means that we are more likely to wrongfully suspect the current leader of failing (false positive). Note that it is also possible to increment the local heartbeat more often than we read other \node{s'} heartbeats, thereby decreasing the chance that a correct leader is suspected. In our reported experiments, we wait $k=100$ms between iterations of the failure detection mechanism.
+
+%\Naama{Removed controversial discussion of benefit of local heartbeats.}
+
+%The local heartbeat mechanism has an interesting property; timeouts do not depend on the network. That is, to suspect a \node{} of having failed, it has to be the case that that \node{'s} leader election thread has failed to increment its heartbeat locally. This is because we employ RDMA Reads, and wait for them to complete. Previous work [PODC'18] has noted the potential for local heartbeats to yield more stable leader election.
+%\vjm{Yes Naama, I think the above argument is bogus since the RDMA Reads also happen over the network, so any delay due to congestion (we've seen delays in seconds in our experiments) or other failures could lead to timeouts.}
+%\Naama{I am worried this is not exactly accurate, since I assume that an RDMA Read has some timeout mechanism on the network, and would simply fail if that timeout is reached. We \emph{would} consider a node to have failed if its read fails, so we \emph{are} actually dependent on the network. It's just that we hide that dependency inside the RDMA mechanism. We could maybe argue that we don't have to `guess' the network timeout, and that RDMA's internal timeouts are probably more trustworthy. Also, what about the fact that in our code right now, we only `wait-for-1', and not for everyone? Isn't that a form of timeout?}
+
+
+\subsection{Permission Management} \label{sec:permission}
+
+The permission management module is used when changing leaders.
+Each replica maintains the invariant that only one replica at a time 
+%(possibly itself)
+has write permission on its log. 
+As explained in Section~\ref{sec:algorithm}, when a leader changes in \sysname, the new leader must request write permission from all the other \node{s}; this is done through a simple RDMA Write to a \textit{permission request array} on the remote side. When a replica $r$ sees a \textit{permission request} from a would-be leader $\ell$, $r$ revokes write access from the current holder, grants write access to $\ell$, and sends an ack to $\ell$.
+
+During the transition phase between leaders, it is possible that several \node{s} think themselves to be leader, and thus the permission request array may contain multiple entries. A permission management thread monitors and handles permission change requests one by one in order of requester id by spinning on the local permission request array.
+
+RDMA provides multiple mechanisms to grant and revoke write access. The first mechanism is to register the consensus log as multiple, completely overlapping RDMA memory regions (MRs), one per remote replica. In order to grant or revoke access from replica $r$, it suffices to re-register the MR corresponding to $r$ with different access flags. The second mechanism is to revoke $r$'s write access by moving $r$'s QP to a non-operational state (e.g., \textit{init}); granting $r$ write access is then done by moving $r$'s QP back to the \textit{ready-to-receive (RTR)} state. The third mechanism is to grant or revoke access from replica $r$ by changing the access flags on $r$'s QP.
+
+\begin{figure}
+\centering
+\begin{tikzpicture}
+	
+    \begin{axis}[
+        height=5cm,
+        width=\linewidth,
+        ytick scale label code/.code={},
+        xlabel={Log Size},
+        ylabel={Time to grant/revoke access [$\mu$s]},
+        xtick=data,
+        xticklabels from table={data/permission_change.txt}{size},
+        xmode=normal,
+        ymode=log,
+        legend pos=north west,
+        legend style={
+            cells={anchor=west}}
+    ]
+        
+    \addplot table[x=x-pos,y=qp_perms] {data/permission_change.txt};
+    \addlegendentry{QP Flags};
+    
+    \addplot table[x=x-pos,y=qp_restart] {data/permission_change.txt};
+    \addlegendentry{QP State};
+    
+    \addplot table[x=x-pos,y=mr_rereg] {data/permission_change.txt};
+    \addlegendentry{MR Rereg}
+
+    \end{axis}
+	
+\end{tikzpicture}
+\\
+
+\caption{Performance comparison of different permission switching mechanisms. \textit{QP Flags}: change the access flags on a QP; \textit{QP Restart}: cycle a QP through the \textit{reset}, \textit{init}, \textit{RTR} and \textit{RTS} states; \textit{MR Rereg}: re-register an RDMA MR with different access flags.}
+\label{fig:permissions}
+\end{figure}
+We compare the performance of these three mechanisms in Figure~\ref{fig:permissions}, as a function of the log size (which is the same as the RDMA MR size).
+We observe that the time to re-register an RDMA MR grows with the size of the MR, and can reach values close to $100$ms for a log size of $4$GB. On the other hand, the time to change a QPs access flags or cycle it through different states is independent of the MR size, with the former being roughly 10 times faster than the latter. However, changing a QPs access flags while RDMA operations to that QP are in flight sometimes causes the QP to go into an error state. Therefore, in \sysname we use a fast-slow path approach: we first optimistically try to change permissions using the faster QP access flag method and, if that leads to an error, switch to the slower, but robust, QP state method.
+
+% We maintain a variable \texttt{curWriter} with the id of the \node{} that currently has write permission on this \node{}. If, while reading the permission request array, the background thread sees a permission request from a \node{} $i$, the thread grants this request by revoking write permission from \texttt{curWriter}, granting write permission instead to \node{} $i$, and updating the value of \texttt{curWriter} accordingly. Revoking and granting write-permissions is done by re-registering the RDMA memory region with new permission flags. After doing so, the thread sends an acknowledgement to \node{} $i$, by writing its acknowledgement into the requester's memory region.
+
+
+% \subsection{Logging}
+
+% At each node, the logging component maintains a local log.\igor{IIRC we no longer have local log copies, need to update this}
+
+% \igor{This paragraph can go.} The local log is where the leader writes in the new request it received from the application layer.
+% The leader uses RDMA Writes to write this request to the same slot in the local log of the other replicas. Before replicating the request, the leader attaches its \emph{proposal number} to it. Each log also keeps a global \textit{min proposal} number which indicates the minimal proposal number that is acceptable to use on this replica (\S\ref{sec:commoncase}, \S\ref{sec:leadchange}).
+%In Section~\ref{sec:commoncase} and~\ref{sec:leadchange}, we describe how these values are used.
+%This and the proposal number attached to each slot is used when switching leaders, to ensure that all logs agree and that values that were written to a majority of the replicas before the leader switch are not lost. 
+
+% The local copies of remote logs are preallocated regions used by new leaders to read the remote logs
+% (\S\ref{sec:leadchange}).\igor{This is no longer true.}
+%to know how to update them. \mka{removed next
+%More details on what a new leader must do before beginning to replicate new values is given in Section~\ref{sec:leadchange}.
+
+% \igor{This paragraph can also go.}A request is considered committed (i.e., decided) once it appears in the logs of a majority of the replicas. Each replica also maintains the \emph{first undecided offset}, indicating the first slot that it does not know to be committed. 
+%To allow followers to know which requests have been committed, we also maintain the \emph{first undecided offset}, which gives the index of the first entry in the log that is not yet known to be committed. In the background, each \node{} uses the log 
+%first undecided offsets written in its log's slots 
+%to compute its own first undecided offset. 
+% Figure~\ref{fig:log-structure} shows the internal structure of the log.
+
+
+% \begin{figure}
+%     \centering
+%     \includegraphics[width=\columnwidth]{log-structure.pdf}
+%     \caption{Log structure in \sysname.\igor{This can go, we describe this in the logic section.}}
+%     \label{fig:log-structure}
+% \end{figure}
+
+
+
+
+
+
+        
+\subsection{Log Recycling}
+Conceptually, a log is an infinite data structure but in practice
+  we need to implement a circular log with limited memory.
+This is done as follows.
+Each follower has a local \textit{log head} variable, pointing to the first entry not yet executed in its copy of the application. The replayer thread advances the log head each time it executes an entry in the application. Periodically, the leader's \leplane{} reads the log heads of all followers and computes \textit{minHead}, the minimum of all log head pointers read from the followers. Log entries up to the minHead can be reused. Before these entries can be reused, they must be zeroed out to ensure the correct function of the canary byte mechanism.
+%\mka{Suffices to zero out the canaries?} \Naama{No, since slot lengths can be variable.}
+Thus, the leader zeroes all follower logs after the leader's first undecided offset and before minHead, using an RDMA Write per follower. Note that this means that a new leader must first execute all leader change actions, ensuring that its first undecided offset is higher than all followers' first undecided offsets, before it can recycle entries. To facilitate the implementation, we ensure that the log is never completely full.
+%We also assume that the log is never completely full. 
+%\Naama{Is this an ok assumption? Are we happy with this description?}
+
+%\Naama{Can't do garbage collection when you're a new leader, i.e. when your FUO is potentially not completely caught up. Also, we need an assumption that the log is never full.}
+
+
+\subsection{Adding and Removing Replicas}
+
+\sysname adopts a standard method to add or remove replicas: use
+  consensus itself to inform replicas about the change~\cite{paxos}.
+More precisely, there is a special log entry that
+  indicates that replicas have been removed or added.
+Removing replicas is easy: once a replica sees it has been removed,
+  it stops executing, while other replicas subsequently
+  ignore any communication with it.
+Adding replicas is more complicated because it requires
+  copying the state of an existing replica into the new one.
+%  since it is infeasible to replay all
+% requests from the beginning of time.
+To do that, \sysname uses the standard approach of check-pointing state; we do so from one of the followers~\cite{wang2017apus}.
+  
+% \subsection{Correctness}
+
+% \igor{Needs to go. Maybe we can recycle some phrases from here if they sound better than in the algorithmic section.}The correctness of \sysname follows from the correctness of Paxos, because
+%   \sysname emulates Paxos in its essence.
+% Specifically, \sysname's leader-changing mechanism   
+%   (Section~\ref{sec:leadchange}) emulates Paxos's prepare phase, in
+%   that a new leader chooses a higher proposal number (also called a ballot number) than anything a follower has seen so far. We use the read of the min proposal number to replace the active reply sent by followers in the Paxos protocol.
+% Furthermore, when a leader starts replicating values, it adopts the value with the highest attached proposal number in that slot, as in Paxos. The accept phase of Paxos is implemented in \sysname in the common case of the replicator (Section~\ref{sec:commoncase}), using an RDMA Write. Its correctness hinges on the permission change mechanism, which allows a leader to know instantaneously whether it is being challenged, through loss of permission. A similar approach was 
+% proven correct for single-instance consensus~\cite{aguilera2019impact}.
+
+% As previous work~\cite{pml2007}, \sysname omits the prepare phase between rounds in which the same leader presides, if the leader has reached an offset beyond which a majority of followers no longer have values from other leaders written in their logs.
+
+

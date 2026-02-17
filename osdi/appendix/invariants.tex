@@ -1,0 +1,132 @@
+\subsection{Invariants}
+
+\subsubsection{Preliminary}
+
+\begin{invariant}[Committed implies decided] \label{inv:commit}
+If a value $v$ is committed at some process $p$ at index $i$, then $v$ is decided at index $i$.
+\end{invariant}
+\begin{proof}
+Assume $v$ is committed at some process $p$ at index $i$. Then $p$ must have incremented its FUO past $i$ at line~\ref{line:app-incrementFUO}, therefore $p$ must have written $v$ at a majority at line~\ref{line:app-writeAccept}.
+\end{proof}
+
+%\Naama{This doesn't necessarily remain true when we add update followers. Need to change this proof to account for that in section~\ref{sec:optimizations}.}
+
+\begin{invariant}[Values are never erased]\label{inv:values-not-erased}
+If a log slot contains a value at time $t$, that log slot will always contain some value after time $t$.
+\end{invariant}
+\begin{proof}
+By construction of the algorithm, values are never erased (note: values can be overwritten, but only with a non-$\bot$ value).
+\end{proof}
+
+\subsubsection{Validity}
+\begin{invariant}\label{inv:pre-validity}
+If a log slot contains a value $v\neq \bot$, then $v$ is the input of some process.
+\end{invariant}
+\begin{proof}
+Assume the contrary and let $t$ be the earliest time when some log slot (call it $L$) contained a non-input value (call it $v$). In order for $L$ to contain $v$, some process $p$ must have written $v$ into $L$ at line~\ref{line:app-writeAccept}. Thus, either $v$ was the input value of $p$ (which would lead to a contradiction), or $p$ adopted $v$ at line~\ref{line:app-freshestValue}, after reading it from some log slot $L'$ at line~\ref{line:app-readVals}. Thus, $L'$ must have contained $v$ earlier than $t$, a contradiction of our choice of $t$. 
+\end{proof}
+
+\begin{theorem}[Validity]\label{inv:validity}
+If a value $v$ is committed at some process, then $v$ was the input value of some process.
+\end{theorem}
+\begin{proof}
+Follows immediately from Invariant~\ref{inv:pre-validity} and the definition of being committed.
+%and from the fact that for a value to be committed, some log slot needs to contain that value.
+\end{proof}
+
+\subsubsection{Agreement}
+
+\begin{invariant}[Solo detection]\label{inv:solo-detection}
+If a process $p$ writes to a process $q$ in line~\ref{line:app-writePrepare} or in line~\ref{line:app-writeAccept}, then no other process $r$ wrote to $q$ since $p$ added $q$ to its confirmed followers set.
+\end{invariant}
+\begin{proof}
+Assume the contrary: $p$ added $q$ to its confirmed followers set at time $t_0$ and wrote to $q$ at time $t_2 > t_0$; $r \ne p$ wrote to $q$ at time $t_1, t_0 < t_1 < t_2$. Then:
+\begin{enumerate}
+    \item $r$ had write permission on $q$ at $t_1$.
+    \item $p$ had write permission on $q$ at $t_2$.
+    \item (From (1) and (2)) $p$ must have obtained write permission on $q$ between $t_1$ and $t_2$. But this is impossible, since $p$ added $q$ to its confirmed followers set at $t_0 < t_1$ and thus $p$ must have obtained permission on $q$ before $t_0$. By the algorithm, $p$ did not request permission on $q$ again since obtaining it, and by the way permission requests work, permission is granted at most once per request. We have reached a contradiction. \qedhere
+\end{enumerate}
+\end{proof}
+%\Naama{Here we are assuming that permission requests only grant permission once per request. This is very reasonable, but we should mention it somewhere and also point out that this is indeed how it works in our implementation.}
+
+\begin{invariant}\label{inv:pre-agreement}
+If some process $p_1$ successfully writes value $v_1$ and proposal number $b_1$ to its confirmed followers in slot $i$ at line~\ref{line:app-writeAccept}, then any process $p_2$ entering the accept phase with proposal number $b_2 > b_1$ for slot $i$ will do so with value $v_1$.
+\end{invariant}
+\begin{proof}
+Assume the contrary: some process enters the accept phase for slot $i$ with a proposal number larger than $b_1$, with a value $v_2 \neq v_1$. Let $p_2$ be the first such process to enter the accept phase. 
+%a set $S$ of processes enter the accept phase with proposal numbers larger than $b_1$ and values different from $v_1$; let $p_2$ be the process in $S$ who enters the accept phase earliest. Then:
+
+Let $C_1$ (resp. $C_2$) be the confirmed followers set of $p_1$ (resp. $p_2$). Since $C_1$ and $C_2$ are both quorums, they must intersect in at least one process, call it $q$. Since $q$ is in the confirmed followers set of both $p_1$ and $p_2$, both must have read its minProposal (line~\ref{line:app-readMinProp}), written its minProposal with their own proposal value (line~\ref{line:app-writePrepare}) and read its $i$th log slot (line~\ref{line:app-readVals}). Furthermore, $p_1$ must have written its new value into that slot (line~\ref{line:app-writeAccept}).
+%\igor{The last part isn't necessarily true: we only assumed that $p_2$ enters its accept phase, not that it writes a value on any process.}
+Note that since $p_1$ successfully wrote value $v_1$ on $q$, by Invariant~\ref{inv:solo-detection}, $p_2$ could not have written on $q$ between the time at which $p_1$ obtained its permission on it and the time of $p_1$'s write on $q$'s $i$th slot. Thus, $p_2$ either executed both of its writes on $q$ before $p_1$ obtained permissions on $q$, or after $p_1$ wrote its value in $q$'s $i$th slot. If $p_2$ executed its writes before $p_1$, then $p_1$ must have seen $p_2$'s proposal number when reading $q$'s minProposal in line~\ref{line:app-readMinProp} (since $p_1$ obtains permissions before executing this line). Thus, $p_1$ would have aborted its attempt and chosen a higher proposal number, contradicting the assumption that $b_1 < b_2$.
+
+Thus, $p_2$ must have executed its first write  on $q$ after $p_1$ executed its write of $v_1$ in $q$'s log. Since $p_2$'s read of $q$'s slot happens after its first write (in line~\ref{line:app-readVals}), this read must have happened after $p_1$'s write, and therefore $p_2$ saw $v_1, b_1$ in $q$'s $i$th slot. By assumption, $p_2$ did not adopt $v_1$. By line~\ref{line:app-freshestValue}, this means $p_2$ read $v_2$ with a higher proposal number than $b_1$ from some other process in $C_2$. This contradicts the assumption that $p_2$ was the first process to enter the accept phase with a value other than $v_1$ and a proposal number higher than $b_1$. The figure below illustrates the timings of events in the execution.
+%
+%\begin{enumerate}[(1)]
+%    \item Let $C_1$ (resp. $C_2$) be the confirmed followers set of $p_1$ (resp. $p_2$) upon entering the accept phase.
+%    \item Since $C_1$ and $C_2$ are both quorums, they must intersect in at least one process, call it $q$.
+%    \item $p_1$ and $p_2$ must have read from $q$ at lines~\ref{line:readMinProp} and \ref{line:readVals} and written to $q$ at lines~\ref{line:writePrepare} and \ref{line:writeAccept}.
+%    \item We define the following times (represented in the figure below for convenience): 
+%    \begin{itemize}
+%        \item $t_0$ --- $p_1$ adds $q$ to its confirmed followers set
+%        \item $t_1$ --- $p_1$ reads the minProposal at $q$ at line~\ref{line:readMinProp}; from the algorithm, $t_1 > t_0$
+%        \item $t_2$ --- $p_1$ writes $v_1$ at $q$ at line~\ref{line:writeAccept} from the algorithm $t_2 > t_1$
+%        \item $t_3$ --- $p_2$ writes the minProposal at $q$ at line~\ref{line:writePrepare}
+%        \item $t_4$ --- $p_2$ reads from $q$ at line~\ref{line:readVals}; from the algorithm, $t_4 > t_3$
+%    \end{itemize}
+%    \item Since $b_1 < b_2$, it must be that $t_1 < t_3$; otherwise, $p_1$ would have seen $p_2$'s higher proposal number and aborted. 
+%    \item It must be that $t_2 < t_3$, otherwise $p_2$ would write to $q$ between the time when $p_1$ obtained write permission on $q$ and the time when $p_1$ wrote on $q$, contradicting Invariant~\ref{inv:solo-detection}.
+%    \item Thus, it must be that $t_4 > t_2$, so $p_2$ saw $v_1$ at $q$. However, we assumed that $p_2$ did not adopt $v_1$ at line~\ref{line:freshestValue}, so $p_2$ must have seen $v_2$ with a proposal number $b' > b_1$.
+%    \item For $p_2$ to have seen $v_2$ with proposal number $b'$, some process $p_3$ must have entered the accept phase with $(v_2, b')$ \textit{before} $p_2$, thus contradicting our choice of $p_2$.
+%\end{enumerate}
+\end{proof}
+
+%\input{tikz}
+
+\begin{theorem}[Agreement]\label{inv:agreement}
+If $v_1$ is committed at $p_1$ at index $i$ and $v_2$ is committed at $p_2$ at index $i$, then $v_1 = v_2$.
+\end{theorem}
+\begin{proof}
+In order for $v_1$ (resp. $v_2$) to be committed at $p_1$ (resp. $p_2$) at index $i$, $p_1$ (resp. $p_2$) must have incremented its FUO past $i$ and thus
+must have successfully written $v_1$ (resp. $v_2$) to its confirmed follower set at line~\ref{line:app-writeAccept}. Let $b_1$ (resp. $b_2$) be the proposal number $p_1$ (resp. $p_2$) used at line~\ref{line:app-writeAccept}. Assume without loss of generality that $b_1 < b_2$. Then, by Invariant~\ref{inv:pre-agreement}, $p_2$ must have entered its accept phase with value $v_1$ and thus must have written $v_1$ to its confirmed followers at line~\ref{line:app-writeAccept}. Therefore, $v_1 = v_2$.
+\end{proof}
+
+
+
+\subsubsection{Termination}
+
+\begin{invariant}[Termination implies commitment.]
+If a process $p$ calls propose with value $v$ and returns from the propose call, then $v$ is committed at $p$.
+\end{invariant}
+\begin{proof}
+Follows from the algorithm: $p$ returns from the propose call only after it sees $done$ to be $true$ at line~\ref{line:app-checkDone}; for this to happen, $p$ must set $done$ to $true$ at line~\ref{line:app-setDone} and increment its FUO at line~\ref{line:app-incrementFUO}. In order for $p$ to set $done$ to $true$, $p$ must have successfully written some value $val$ to its confirmed follower set at line~\ref{line:app-writeAccept} and $val$ must be equal to $v$ (check at line~\ref{line:app-checkMyValue}). Thus, when $p$ increments its FUO at line~\ref{line:app-incrementFUO}, $v$ becomes committed at $p$.
+\end{proof}
+
+\begin{invariant}[Weak Termination]\label{inv:weak-termination}
+If a correct process $p$ invokes Propose and does not abort, then $p$ eventually returns from the call.
+\end{invariant}
+\begin{proof}
+The algorithm does not have any blocking steps or goto statements, and has only one unbounded loop at line~\ref{line:app-checkDone}. Thus, we show that $p$ will eventually exit the loop at line~\ref{line:app-checkDone}.
+
+Let $t$ be the time immediately after $p$ finishes constructing its confirmed followers set (lines~\ref{line:app-permission-start}--\ref{line:app-permission-end}). Let $i$ be the highest index such that one of $p$'s confirmed followers contains a value in its log at index $i$ at time $t$. Given that $p$ does not abort, it must be that $p$ does not lose write permission on any of its confirmed followers and thus has write permission on a quorum for the duration of its call. Thus, after time $t$ and until the end of $p$'s call, no process is able to write any new value at any of $p$'s confirmed followers [$\ast$].
+
+Since $p$ never aborts, it will repeatedly execute the accept phase and increment its FUO at line~\ref{line:app-incrementFUO} until $p$'s FUO is larger than $i$. During its following prepare phase, $p$ will find all slots to be empty (due to [$\ast$]) and adopt its own value $v$ at line~\ref{line:app-adoptOwn}. Since $p$ does not abort, $p$ must succeed in writing $v$ to its confirmed followers at line~\ref{line:app-writeAccept} and set $done$ to $true$ in line~\ref{line:app-setDone}. Thus, $p$ eventually exits the loop at line~\ref{line:app-checkDone} and returns.
+\end{proof}
+
+\begin{theorem}[Termination] If eventually there is a unique non-faulty leader, then eventually every Propose call returns.
+\end{theorem}
+\begin{proof}
+We show that eventually $p$ does not abort from any Propose call and thus, by Invariant~\ref{inv:weak-termination}, eventually $p$ returns from every Propose call.
+
+Consider a time $t$ such that (1) no processes crash after $t$ and (2) a unique process $p$ considers itself leader forever after $t$. 
+
+Furthermore, by Invariant~\ref{inv:weak-termination}, by some time $t' > t$ all correct processes will return or abort from any Propose call they started before $t$; no process apart from $p$ will call Propose again after $t'$ since $p$ is the unique leader.
+
+Thus, in any propose call $p$ starts after $t'$, $p$ will obtain permission from a quorum in lines~\ref{line:app-permission-start}--\ref{line:app-permission-end} and will never lose any permissions (since no other process is requesting permissions). Thus, all of $p$'s reads and writes will succeed, so $p$ will not abort at lines~\ref{line:app-abort-phase0}, \ref{line:app-abort-phase1}, or \ref{line:app-abort-phase2}.
+
+Furthermore, since no process invokes Propose after $t'$, the minProposals of $p$ confirmed followers do not change after this time. Thus, by repeatedly increasing its minProposal at line~\ref{line:app-pickProp}, $p$ will eventually have the highest proposal number among its confirmed followers, so $p$ will not abort at line~\ref{line:app-abortProposal}. 
+
+Therefore, by Invariant~\ref{inv:weak-termination}, $p$ will eventually return from every Propose call.
+\end{proof}
+
+We consider a notion of eventual synchrony, whereby after some unknown global stabilization time, all processes become timely. If this is the case, then Mu's leader election mechanism ensures that eventually, a single correct leader is elected forever. This leader is the replica with the lowest id that did not crash: after the global stabilization point, this replica would be timely, and therefore would not miss a heartbeat. All other replicas would see its heartbeats increasing forever, and elect it as their leader. This guarantees that our algorithm terminates under this eventual synchrony condition.

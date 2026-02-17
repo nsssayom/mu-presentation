@@ -1,0 +1,139 @@
+\section{Background} \label{sec:background}
+
+\subsection{Microsecond Apps and Computing}\label{sec:mu}
+
+Apps that are consumed by humans typically work at the millisecond scale: to the 
+  human brain, the lowest reported perceptible latency is 13 milliseconds~\cite{rsvp}.
+Yet, we see the emergence of apps that
+  are consumed not by humans but by 
+  other computing systems.
+An increasing number of such systems must
+  operate at the microsecond scale, for competitive,
+  physical, or composition reasons.
+Schneider~\cite{mumarket} speaks of a microsecond market where traders spend massive resources to gain a microsecond advantage in their high-frequency trading.
+Industrial robots must orchestrate their motors with microsecond granularity for precise movements~\cite{mumotor}.
+Modern distributed systems are composed of
+  hundreds~\cite{mubench}
+  of
+  stateless and
+  stateful microservices, such as
+  key-value stores, web servers, load balancers, and
+  ad services---each operating
+  as an independent app whose
+  latency requirements are gradually decreasing
+  to the microsecond level~\cite{muback},
+  as the number of composed services is
+  increasing.
+%  as service composition aggregates
+%  latency and 
+With this trend, we already see the emergence
+  of key-value stores with microsecond latency (\eg, \cite{storm,erpc}).
+
+To operate at the microsecond scale, the computing
+  ecosystem must be improved at many layers.
+This is happening gradually by various recent efforts.
+Barroso et al~\cite{mukiller} argue for
+  better support of microsecond-scale
+  events.
+The latest Precision Time Protocol improves
+  clock synchronization to
+  achieve submicrosecond accuracy~\cite{ptplatest}.
+And other recent work improves 
+  CPU scheduling~\cite{muback,shenango,zygos},
+  %muback,shenango,zygos
+  thread management~\cite{arachne},
+  %arachne
+  power management~\cite{ix},
+  RPC handling~\cite{erpc,rpcvalet},
+  %ix
+  and the network stack~\cite{shenango}---all
+  %shenango
+  at the microsecond scale.
+\sysname fits in this context, by providing
+   microsecond SMR.
+
+\subsection{State Machine Replication}
+State Machine Replication (SMR) replicates a service (\eg, a key-value storage system)
+  across multiple physical servers called \emph{replicas}, such that the system remains available and consistent even if some servers fail.
+SMR provides strong consistency in the form of linearizability~\cite{HW90}.
+A common way to implement SMR, which we adopt in this paper, is as follows: each replica
+  has a copy of the service software and a log. 
+The log stores client requests.
+We consider non-durable SMR
+  systems~\cite{ramcloud,li2016just,curp,jin2018netchain,istvan2016consensus,ipipe},
+  which keep state in memory only, without logging updates to stable storage. 
+Such systems make an item of data reliable by keeping copies of it in the memory of several nodes. Thus, the data remains recoverable as long as there are fewer simultaneous node failures than data copies~\cite{poke2015dare}.
+
+A consensus protocol ensures that all replicas agree on what request is stored in each 
+  slot of the log.
+Replicas then apply the requests in the log (i.e., execute the 
+corresponding operations), in log order.
+Assuming that the service is deterministic, this ensures all replicas remain
+  in sync.
+We adopt a leader-based approach, in which a dynamically elected replica 
+  called the \emph{leader} communicates with the clients and sends back responses
+  after requests reach a majority of replicas.
+We assume a \textit{crash-failure} model: servers may fail by crashing, after which they
+  stop executing. 
+%A server that crashes is called faulty; otherwise it is called correct. 
+% As usual, we assume that a majority of servers remain alive.
+%We make the standard assumption that a majority of servers are correct.
+
+
+%The protocol used for replicating a log entry is called a consensus protocol. In its 
+% general form, a consensus protocol exposes a  \texttt{propose(value)} method to all
+% participants. Participants may invoke this method only once; they are then said to
+%\textit{propose} a value. The method returns a value; the participant is then said to
+%\textit{decide} or \textit{commit} that value.  
+A consensus protocol must ensure \textit{safety} and \textit{liveness} properties. 
+Safety here means 
+(1) \textit{agreement} (different replicas do not obtain different values for
+   a given log slot)
+   and
+(2) \textit{validity} (replicas do not obtain spurious values).
+Liveness means \textit{termination}---every live replica eventually obtains a value.
+\CR{We guarantee agreement and validity in an asynchronous system, while termination 
+  requires eventual synchrony and a majority of non-crashed replicas, as in typical consensus protocols.
+  In theory, it is possible to design systems that terminate under weaker synchrony~\cite{chandra1996weakest}, 
+  but this is not our goal.}
+
+% In practice, it is common for SMR systems to adopt a \textit{leader-based} approach to consensus, illustrated in Figure~\ref{fig:overview}. The participants elect a leader, who is in charge of accepting client requests and of replicating them. Only a leader may propose values to the consensus protocol; non-leader participants (called \textit{followers}) passively help with replication and are informed of decided values.
+
+\subsection{RDMA}
+
+Remote Direct Memory Access (RDMA) allows a host to access the memory of another host
+  without involving the processor at the other host.
+%  machines to access the memory of remote machines without involving the operating system of either side.
+%There are several implementations of RDMA; in this work we focus on InfiniBand, but we believe our design is compatible with other implementations as well.
+% \vjm{Not with iWARP since it can return completion acks before the RDMA write has made it to the remote side}.
+RDMA enables low-latency communication by bypassing the OS kernel and by implementing several layers of the network stack in hardware.
+%(physical layer up to transport layer).
+
+RDMA supports many operations: Send/Receive, Write/Read, and Atomics 
+  (compare-and-swap, fetch-and-increment). 
+  Because of their lower latency, we use only RDMA Writes and Reads.
+RDMA has several transports; we use Reliable Connection (RC) to provide in-order reliable delivery.
+%
+%as \sysname requires  for correctness. 
+%\mka{explain why}\igor{Done. Sounds good?}
+%and Unreliable Connection (UC). 
+%RC supports send/receive, read/write, and atomics, and 
+%RC guarantees that messages are delivered at most once and in order.
+%UC only supports sends and writes, and does not guarantee in-order delivery; UC may silently drop out of sequence or corrupted packages. 
+
+RDMA connection endpoints are called Queue Pairs (QPs). 
+Each QP is associated to a Completion Queue (CQ). 
+Operations are posted to QPs as Work Requests (WRs). 
+The RDMA hardware consumes the WR, performs the operation, and posts a Work Completion (WC) to the CQ. 
+Applications make local memory available for remote access by registering local virtual memory regions (MRs) with the RDMA driver. Both QPs and MRs can have different access modes
+  (e.g., read-only or read-write).
+The access mode is specified when initializing the QP or registering the MR, but can be changed later.
+MRs can overlap: the same memory can be registered multiple times, yielding multiple MRs,
+  each with its own access mode. 
+In this way, different remote machines can have different access rights to the same memory. The same effect can be obtained by using different access flags for the QPs used to communicate with remote machines.
+
+% \vjm{Perhaps drop the next para.}
+% Before a machine can access remote memory through reads and writes, the remote side needs to register that memory as a Memory Region (MR). 
+% Each MR has one or more access flags specifying what access level it enables (e.g., read-write or read-only). The access flags need to be specified when registering the MR, but can be changed during execution.
+% An MR is not associated directly to a QP; rather, MRs and QPs are associated to a Protection Domain (PD). This enables many-to-many access between QPs and MRs: it is possible to access multiple MRs from the same QP and to access the same MR from multiple QPs.
+% MRs can overlap: the same memory can be registered multiple times to produce multiple MRs, each with its own access flags. Thus different remote machines can have different access levels to the same local memory.

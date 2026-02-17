@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+        <rdf:Description rdf:about="" xmlns="http://namespace.corel.com/Cdr/metadata">
+            <TextStream>
+                <TextRun break="para" lang="1033">ok</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">local log</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">v2</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">v1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">replayer</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">leader</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">leader elect.</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">42</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">leader</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">heartbeat</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">leader election</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">curWriter</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">curWriter</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">0</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">0</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">perm management</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">permissions</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">7</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">replicator</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">proposalNr</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">0</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">0</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">perms</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">perm mgmt</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">local log</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">v2</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">v1</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">logging</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">QPs</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">QPs</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">RDMA</TextRun>
+                <TextRun break="line" lang="1033">comm</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">leader</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">RDMA</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">RDMA</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">QPs</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">QPs</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">RDMA</TextRun>
+                <TextRun break="line" lang="1033">comm</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">background</TextRun>
+                <TextRun break="line" lang="1033">plane</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">replication</TextRun>
+                <TextRun break="line" lang="1033">plane</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">follower</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">application </TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">propose</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">application </TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">request</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">request</TextRun>
+                <TextRun break="line" lang="1033">inject</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">request</TextRun>
+                <TextRun break="line" lang="1033">capture</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">response</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">execute</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">ok</TextRun>
+            </TextStream>
+            <TextStream>
+                <TextRun break="para" lang="1033">client</TextRun>
+            </TextStream>
+            <ObjectNames>
+                <rdf:Bag />
+            </ObjectNames>
+            <LayerNames>
+                <rdf:Bag>
+                    <rdf:li>Layer 1</rdf:li>
+                </rdf:Bag>
+            </LayerNames>
+            <PageNames>
+                <rdf:Bag />
+            </PageNames>
+        </rdf:Description>
+    </rdf:RDF>
+</x:xmpmeta>

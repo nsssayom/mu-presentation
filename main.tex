@@ -1,0 +1,265 @@
+\def\omitcomments{1}
+\newif\ifcamera
+%   \cameratrue % comment out line for full version
+%\def\squeeze{0}
+\documentclass[letterpaper,twocolumn,10pt]{article}
+\usepackage{usenix2019_v3}
+\ifcamera
+\usepackage[available,functional]{usenixbadges}
+\fi
+%\documentclass[sigplan,10pt]{acmart}
+
+\ifcamera
+\pagestyle{empty}
+\fi
+
+%\usepackage{tonsmod}
+%\usepackage[margin=1in]{geometry}
+ %\usepackage[subtle]{savetrees}
+
+%\usepackage{booktabs} % For formal tables
+%\usepackage{enumitem}
+
+\usepackage{latexsym,amsmath,amsfonts,amssymb,stmaryrd,mathtools}
+%\let\proof\relax
+%\let\endproof\relax
+\usepackage{amsthm}
+% \usepackage{xcolor}
+\usepackage{algorithm, algorithmicx}
+\usepackage[noend]{algpseudocode}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{wrapfig}
+\usepackage{listings, fancyvrb}
+% \usepackage{multicol}
+\usepackage{multirow}
+% \usepackage{times}
+\usepackage{comment}
+%\usepackage{authblk}
+\usepackage{xspace}
+\usepackage{pifont}
+\usepackage{parcolumns}
+\usepackage{graphicx}
+\usepackage{enumerate}
+\usepackage{enumitem}
+\usepackage{wrapfig}
+\usepackage{tabularx}
+\usepackage{titlecaps}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\usepackage{booktabs}
+\microtypecontext{spacing=nonfrench}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{invariant}[theorem]{Invariant}
+\newtheorem{definition}{Definition}
+\newtheorem{observation}{Observation}
+\newtheorem{assumption}{Assumption}
+
+\def\t{\textit}
+\def\rdma{\textsc{rdma}\xspace}
+\def\mr{\t{mr}}  % memory region parameter to operations
+\def\ack{\t{ack}}
+\def\nak{\t{nak}}
+\def\RW{\t{RW}}
+\newcommand\rmv[1]{}
+\def\eg{e.g.}
+\def\ie{i.e.}
+
+\newcommand{\node}{replica}
+\newcommand{\rplane}{replication plane}
+\newcommand{\leplane}{background plane}
+\newcommand{\sysname}{Mu\xspace}
+\newcommand{\redis}{Redis\xspace}
+\newcommand{\memcached}{Memcached\xspace}
+
+\DeclareRobustCommand*\cal{\mathcal}
+
+%\newcommand{\ourModel}{Protected M\&M model}
+
+\if\omitcomments 1
+ \newcommand{\Naama}[1]{}
+ \newcommand{\igor}[1]{}
+ \newcommand{\mka}[1]{}
+ \newcommand{\vjm}[1]{}
+ \newcommand{\red}[1]{#1}
+\else
+ \newcommand{\Naama}[1]{\noindent
+ 	{\color{blue}{\textbf{Naama: }#1}}}
+ \newcommand{\igor}[1]{\noindent
+    {\color{brown}{\textbf{Igor: }#1}}}
+ \newcommand{\mka}[1]{\noindent
+    {\color{orange}{\textbf{MKA: }#1}}}
+ \newcommand{\vjm}[1]{\noindent
+    {\color{red}{\textbf{VJM: }#1}}}
+ \newcommand{\red}[1]{\noindent
+    {\color{red}{#1}}}
+\fi
+% \newcommand{\CR}[1]{{\color{brown}{\textbf{CAMERA-READY: }#1}}}
+% \newcommand{\CR}[1]{{\color{brown}{#1}}}
+\newcommand{\CR}[1]{{#1}}
+
+% \newcommand{\CRExtra}[1]{{\color{orange}{#1}}}
+\newcommand{\CRExtra}[1]{{#1}}
+\newcommand{\blue}[1]{{\color{blue}{#1}}}
+
+\newcommand{\xparagraph}[1]{\noindent\textbf{#1}}
+
+
+\lstset{basicstyle=\footnotesize\ttfamily, tabsize=2, escapeinside={@}{@}}
+%\lstset{literate={<<}{{$\langle$}}1  {>>}{{$\rangle$}}1}
+\lstset{literate={<<}{{$\langle$}}1  {>>}{{$\rangle$}}1}
+\lstset{breaklines=true,
+    postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space}}
+\lstset{language=C, morekeywords={CAS,commit,empty,job,taken,entry,GOTO,bool}}
+\lstset{xleftmargin=5.0ex, numbers=left,numberstyle=\tiny, numberblanklines=false, frame=single, showstringspaces=false}
+\lstset{keywords={}}
+%\lstset{caption={\texttt{tuple} and \collect{} algorithms},captionpos=b,label={alg:collect}}
+\makeatletter
+\lst@Key{countblanklines}{true}[t]%
+{\lstKV@SetIf{#1}\lst@ifcountblanklines}
+
+\lst@AddToHook{OnEmptyLine}{%
+	\lst@ifnumberblanklines\else%
+	\lst@ifcountblanklines\else%
+	\advance\c@lstnumber-\@ne\relax%
+	\fi%
+	\fi}
+\makeatother
+
+\renewcommand{\topfraction}{1.0}
+\renewcommand{\dbltopfraction}{1.0}
+\renewcommand{\textfraction}{0.01}
+\renewcommand{\bottomfraction}{1.0}
+\renewcommand{\floatpagefraction}{0.95}
+\renewcommand\dblfloatpagefraction{.95}
+
+%\setlength{\floatsep}{8.0pt plus 2.0pt minus 2.0pt}
+
+\graphicspath{{../figures/}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%% PGFPLOTS &&&&&&&&&&&&&&&
+% Options for plotting with pgfplots
+\usetikzlibrary{
+    pgfplots.colorbrewer,
+} 
+\pgfplotsset{compat=newest}
+\pgfplotsset{
+    tick label style={font=\small},
+    label style={font=\small},
+    legend style={font=\footnotesize},
+    % every mark/.append style={solid},
+    every axis/.append style={line width=1pt},
+    % every axis plot/.append style={line width=1.5pt},
+    cycle list name=exotic,
+    % colormap name=viridis,
+    % cycle list/RdGy-6,
+    % cycle multiindex* list={
+    %     RdGy-6
+    %         \nextlist
+    %     mark list*
+    %         \nextlist
+    %     linestyles*
+    %         \nextlist
+    %     very thick
+    %         \nextlist
+    % },
+    cycle list/.define={my marks}{
+        every mark/.append style={solid,fill=\pgfkeysvalueof{/pgfplots/mark list fill}},mark=*\\
+        every mark/.append style={solid,fill=\pgfkeysvalueof{/pgfplots/mark list fill}},mark=square*\\
+        every mark/.append style={solid,fill=\pgfkeysvalueof{/pgfplots/mark list fill}},mark=triangle*\\
+        every mark/.append style={solid,fill=\pgfkeysvalueof{/pgfplots/mark list fill}},mark=diamond*\\
+    },
+    mark list fill={.!75!white},
+    cycle multiindex* list={
+        exotic
+            \nextlist
+        my marks
+            \nextlist
+        linestyles*
+            \nextlist
+        very thick
+            \nextlist
+    },
+}
+\usepgfplotslibrary{groupplots}
+
+\begin{document}
+	
+
+%\renewcommand\footnotetextcopyrightpermission[1]{}
+%\pagestyle{plain}
+%\settopmatter{printfolios=true}
+%\settopmatter{printacmref=false}
+%\author{}
+%\date{}
+
+%\title{Toward Microsecond Consensus}
+\title{\resizebox{\textwidth}{!}{\mbox{Microsecond Consensus for Microsecond Applications}}}
+% \title{\mbox{Microsecond Consensus for Microsecond Applications}}
+
+% \author{Paper \#152}
+
+\author{
+{\rm Marcos K. Aguilera}\\
+VMware Research
+\and
+{\rm Naama Ben-David}\\
+VMware Research
+\and
+{\rm Rachid Guerraoui}\\
+EPFL
+\and
+{\rm Virendra J. Marathe}\\
+Oracle Labs
+\and
+{\rm Athanasios Xygkis}\\
+EPFL
+\and
+{\rm Igor Zablotchi}\\
+EPFL
+} % end author
+
+\maketitle
+
+\input{osdi/abstract2}
+
+
+
+\input{osdi/intro1}
+%\input{osdi/intro3}
+\input{osdi/background}
+\input{osdi/overview}
+\input{osdi/logic}
+\input{osdi/design3}
+% \input{tex/optimizations}
+\input{osdi/impl}
+\input{osdi/evaluation2}
+%\input{eurosys/evaluation}
+\input{osdi/related}
+\input{osdi/discussion}
+
+% \paragraph{Acknowledgements.} We wish to thank our shepherd, Kathryn S. McKinley, and the anonymous reviewers for their helpful comments on improving the paper. This work has been supported in part by the European Research Council (ERC) Grant 339539 (AOC).
+
+
+% \renewcommand{\bibfont}{\normalsize}
+\bibliographystyle{plain}
+\bibliography{bib/biblio}
+
+\ifcamera
+\else
+\newpage
+\appendix
+\section{Appendix: Proof of Correctness}\label{sec:appendix}
+\input{osdi/appendix/pseudocode}
+\input{osdi/appendix/definitions}
+\input{osdi/appendix/invariants}
+%\input{osdi/appendix/extra}
+\input{osdi/appendix/extensions}
+\fi
+	
+\end{document}

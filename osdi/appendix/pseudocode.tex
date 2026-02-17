@@ -1,0 +1,46 @@
+\subsection{Pseudocode of the Basic Version}
+
+\begin{lstlisting}
+Propose(myValue):
+    done = false
+    If I just became leader or I just aborted
+        For every process p in parallel:@\label{line:app-permission-start}@
+            Request permission from p
+            If p acks, add p to confirmedFollowers
+        Until this has been done for a majority of processes@\label{line:app-permission-end}@
+    While not done:@\label{line:app-checkDone}@
+        Execute Prepare Phase
+        Execute Accept Phase
+\end{lstlisting}
+
+\begin{lstlisting}[firstnumber=last]
+struct Log {
+    log[] = @$\bot$@ for all slots
+    minProposal = 0
+    FUO = 0    }
+    
+Prepare Phase:
+    Pick a new proposal number, propNum, that is higher than any seen so far @\label{line:app-pickProp}@
+    For every process p in confirmedFollowers:
+        Read minProposal from p's log @\label{line:app-readMinProp}@
+        Abort if any read fails @\label{line:app-abort-phase0}@
+    If propNum < some minProposal read, abort @\label{line:app-abortProposal}@ 
+    For every process p in confirmedFollowers:
+        Write propNum into LOG[p].minProposal @\label{line:app-writePrepare}@
+        Read LOG[p].slots[myFUO] @\label{line:app-readVals}@
+        Abort if any write or read fails @\label{line:app-abort-phase1}@
+    if all entries read were empty: @\label{line:app-checkEmpty}@
+        value = myValue @\label{line:app-adoptOwn}@
+    else:
+        value = entry value with the largest proposal number of slots read @\label{line:app-freshestValue}@
+    
+Accept Phase:
+    For every process p in confirmedFollowers:
+        Write value,propNum to p in slot myFUO @\label{line:app-writeAccept}@
+        Abort if any write fails @\label{line:app-abort-phase2}@
+    If value == myValue: @\label{line:app-checkMyValue}@
+        done = true @\label{line:app-setDone}@
+    Locally increment myFUO @\label{line:app-incrementFUO}@
+\end{lstlisting}
+
+Note that write permission can only be granted at most once per request; it is impossible to send a single permission request, be granted permission, lose permission and then regain it without issuing a new permission request. This is the way that permission requests work in our implementation, and is key for the correctness argument to go through; in particular, it is important that a leader cannot lose permission between two of its writes to the same follower without being aware that it lost permission.

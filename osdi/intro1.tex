@@ -1,0 +1,215 @@
+\section{Introduction}
+
+%State-machine replication (SMR) is a technique commonly used to replicate a service across many hosts to tolerate host failures and provide high availability. SMR research has traditionally focused on applications that work at the millisecond scale or above. This paper considers SMR in the context of \emph{microsecond-scale computing}~\cite{killermicro}.
+
+% Rationale for edit: talk about things at higher level, postpone discussion of metrics.
+
+%Old paragraph:
+%State-machine replication (SMR) allows services to tolerate server failures by replicating each request among several hosts. SMR can be applied in an almost black-box fashion to many applications, and is a crucial part of ensuring high availability in the face of potential server failures.
+%An SMR system's performance may change drastically depending on network conditions. Applications that use SMR trade off a slight hit in latency in normal execution for higher availability compared to their unreplicated versions.  It is thus natural to evaluate an SMR system by two separate metrics; the overhead it introduces in normal execution when there are no failures, and how quickly it recovers from failures when they occur.
+
+% Microsecond-scale computing has emerged in recent years as a must~\cite{mukiller}, 
+Enabled 
+by modern technologies such as RDMA, Microsecond-scale computing is emerging as a must~\cite{mukiller}.
+A microsecond app might be expected to process a request in 10 microseconds.
+% with implications to both hardware and software~\cite{mukiller}.
+% {\bf Rachid: I am not sure this first sentence was clear: what implies what?}
+% Hardware is now widely available for transmitting and persisting data with microsecond performance, using  technologies such as RDMA and persistent memory.
+% {\bf Rachid: Is persistent memory important? We do not do much about that anyway}
+Areas where software systems care about microsecond performance include finance 
+(\eg, trading systems), embedded computing (\eg, control systems), and microservices (\eg, key-value stores).
+% A typical microsecond app might be expected to process a request in 10 microseconds.
+%Old paragraph
+%Recent hardware trends, notably the use of RDMA in data centers and the introduction of NVRAM, have allowed cross network communication and durability to occur in a matter of a few microseconds. This is a drastic shift compared to the millisecond-scale latencies for such operations in the past\cite{killermicro}.
+%Such faster networking clears the path towards fault-tolerant microsecond-level applications (e.g., KV-stores, market trading applications); replicating these low-latency applications was impractical before due to the huge overhead that SMR would have imposed.
+%%This has led to the design and implementation of several applications that operate with latencies of just several microseconds, including key-value stores~\cite{dragojevic2014farm,kalia2014using} and market trade applications\cite{liquibook}.
+Some of these areas are critical and it is desirable to replicate their microsecond apps 
+across many hosts to provide high availability, due to economic, safety, 
+or robustness reasons.
+Typically, a system may have hundreds of microservice apps~\cite{mubench}, some of which are stateful 
+and can disrupt a global execution if they fail (\eg, key-value stores)---these apps should be replicated for 
+the sake of the whole system.
+%
+%However, such microsecond applications can be fragile, since they often only operate under good network conditions, and when no server fails. In this paper, we address the problem of designing \emph{robust} microsecond applications.
+%
+%Our goal is to make microsecond applications robust against failures by replicating them.
+%This is motivated by an economic incentive (\eg, financial apps) or
+%
+
+The golden standard to replicate an app is State Machine Replication (SMR)~\cite{schneider1990implementing}, whereby
+replicas execute requests in the same total order determined by a consensus protocol. 
+%To tolerate failures and increase availability, a well-established and commonly used technique is State Machine replication (SMR), which replicates a service across many hosts.
+Unfortunately, traditional SMR systems add hundreds of microseconds of overhead even on a fast network~\cite{hunt2010zookeeper}.
+Recent work explores modern hardware in order to improve the performance of replication~\cite{wang2017apus,poke2015dare,hermes,erpc,derecho,hovercraft}. 
+% Of these, the fastest system DARE adds \red{4} microseconds, while the latest system HovercRaft adds 10+ microseconds. 
+% These overheads are high for apps that take only 10 microseconds.
+The fastest of these (\eg, Hermes~\cite{hermes}, DARE~\cite{poke2015dare}, and HovercRaft~\cite{hovercraft}) induce however 
+an overhead of several microseconds, which is 
+clearly high for apps that themselves take few microseconds.
+Furthermore, when a failure occurs, prior systems incur a prohibitively large fail-over time in the tens 
+of \emph{milli}seconds (not microseconds). For instance, HovercRaft takes 10 milliseconds,
+DARE 30 milliseconds, and Hermes at least 150 milliseconds. 
+The rationale for such large latencies are timeouts that account for the natural fluctuations in the latency of modern networks.
+Improving replication and fail-over latencies requires fundamentally new techniques.
+%that seek high availability---the main purpose of replication in the first place.
+
+%As a result, recent work has proposed new SMR systems that are carefully designed to use modern hardware to significantly improve latency and better support microsecond applications~\cite{wang2017apus,poke2015dare,erpc,derecho}. However, these systems still introduce overheads of several microseconds for each request, which may still be impractical for a typical microsecond application that might process a request in 10 microseconds. 
+
+
+%Microsecond applications require microsecond SMR to preserve their speed.
+%A typical microsecond application might process a request in 10 microseconds.
+%To incur a small overhead, a replication solution should add only a few microseconds to each request. 
+%Unfortunately, traditional SMR systems add hundreds of microseconds even on a fast network~\cite{hunt2010zookeeper}, which is one or two orders of magnitude higher than the latency of the application.
+
+We propose \sysname, a new SMR system that adds less than 1.3 microseconds to replicate a (small) app request, 
+with the 99th-percentile at 1.6 microseconds.
+%\Naama{these are the numbers for standalone runs}.
+Although \sysname is a general-purpose SMR scheme for a generic app, \sysname really shines with microsecond apps, 
+where even the smallest replication overhead is significant.
+Compared to the fastest prior system, \sysname is able to cut 61\% of its latency.
+%\Naama{61\% discount over hermes when comparing to our worst app}. 
+This is the smallest latency possible with current RDMA hardware, as it corresponds to one round of \emph{one-sided} communication.
+
+To achieve this performance, \sysname introduces a new SMR protocol that fundamentally changes how RDMA can be leveraged for replication. 
+Our protocol reaches consensus and replicates a request with just one round of
+%just one round of one-sided RDMA writes: essentially, 
+%reaching consensus is as fast as completing 
+parallel RDMA write operations on a majority of replicas.
+This is in contrast to prior approaches, which take multiple rounds~\cite{derecho,poke2015dare,wang2017apus} or resort to two-sided communication~\cite{hunt2010zookeeper,erpc,kotla2007zyzzyva,mazieres2007paxos}. Roughly, in \sysname the leader replicates a request by simply using RDMA to write it to the log of each replica, without additional rounds of communication. 
+Doing this correctly is challenging because concurrent leaders may try to write to the logs simultaneously. 
+In fact, the hardest part of most replication protocols is the mechanism to protect against races of concurrent 
+leaders (\eg, Paxos proposal numbers~\cite{paxos}). 
+Traditional replication implements this mechanism using send-receive communication (two-sided operations) or multiple rounds of communication.
+% , which are slow. 
+Instead, \sysname uses RDMA write permissions to guarantee that a replica's log can be written by only one leader. 
+Critical to correctness are the mechanisms to change leaders and garbage collect logs, as we describe in the paper.
+
+\sysname also improves fail-over time to just 873 microseconds, with the 99-th percentile at 945 microseconds,
+which cuts fail-over time of prior systems by an order of magnitude.
+%
+%In \sysname, this latency is dominated by the NIC's cost of changing RDMA permissions, which we suspect never had a good reason to be optimized. This overhead diminishes once better hardware is available.
+%
+%OLD TEXT
+%For such applications, the judicious design of an efficient SMR system is ever more crucial. When the application latency is small, the overhead that SMR introduces in normal execution now makes for a larger percentage of the overall latency, and must therefore be carefully optimized. Previously known SMR solutions, that may take hundreds of microseconds to replicate requests~\cite{hunt2010zookeeper}, are no longer acceptable. Recent work has therefore focused on developing SMR protocols that use the available hardware to improve replication latencies to just several microseconds~\cite{wang2017apus,poke2015dare,erpc,derecho}. However, when the unreplicated applications take just several microseconds themselves, pushing down the SMR overhead further can make the difference between a practical solution and an unacceptable one.
+%
+The fact that \sysname significantly improves both replication overhead and fail-over latency is perhaps surprising: folklore suggests a trade-off between the latencies of replication in the fast path, and fail-over in the slow path.
+% , such that a system cannot simultaneously optimize both.
+% ~\cite{kotla2007zyzzyva} (although prior work has shown that this need not always be the case~\cite{ClementWADM09}).
+%
+%
+%Furthermore, fast fail-over time also takes a more central role in microsecond-scale applications. Long periods of unavailability when failing over are more noticeable when the request latency in normal execution is comparatively tiny. Many SMR systems focus their efforts on optimizing normal execution, but are satisfied with taking tens or even hundreds of milliseconds to fail over~\cite{}. Moreover, folklore wisdom indicates that there is a tradeoff between the normal execution latency and fail-over, and  that one systems cannot simultaneously optimize both~\cite{kotla2007zyzzyva,aardvark}.
+%
+%In this paper, we show that this is not the case. We present \sysname, a system that achieves both lower normal execution overhead and lower fail-over time than any SMR system known to date. 
+%
+%\sysname is based on RDMA, and uses RDMA's ability to grant and revoke memory access permissions to replicate requests in \emph{a single one-sided network round trip}, and without involving the CPU of non-leader replicas. 
+%TODO: ensure next sentence is somewhere in the inner sections
+%This is a significant difference from previous work, which either requires at least two network round trips to replicate each request~\cite{derecho,poke2015dare,wang2017apus}, or uses two-sided messages that involve processing by each replica's CPU in the critical path~\cite{hunt2010zookeeper,erpc,kotla2007zyzzyva,mazieres2007paxos}, or both.
+%
+%\sysname achieves low latency through a new SMR protocol that uses one-sided RDMA operations. In this protocol, the leader replicates a request very quickly, by using RDMA to directly write into the log of each replica. Doing this correctly is challenging because leaders may execute concurrently. The hardest part of any replication protocol is the mechanism to protect against a race between concurrent leaders (\eg, Paxos proposal numbers). Traditional replication implements this mechanism using send-receive communication (two-sided operations), whereby replicas can inspect messages from the leader, and decide whether to accept them. This approach cannot be used with one-sided operations. To overcome this problem, \sysname uses RDMA exclusive write permissions.
+%Intuitively, write permissions guarantee that a replica's log can be written by only one other replica---the replica believed to be the leader. Thus, only a replica with write permissions on a majority of the replicas can succeed in committing its value. When a leader changes, each replica revokes the write permission from the previous leader, and grants it to the new leader.
+%
+%\sysname achieves this single round trip replication by relying on exclusive write permissions for the leader replica. Similarly to Paxos~\cite{paxos}, a replica proposes a value to be replicated if it believes itself to be the leader. Multiple replicas can simultaneously believe themselves to be leaders, but the protocol ensures that only one of their values gets selected. In \sysname, this is done by guaranteeing that at any point in time, each replica only allows one other replica to make changes on its log: the replica it currently believes to be the leader. Only a leader with write permissions on a majority of the replicas can be successful in committing its value. When a leader changes, each replica revokes the write permission from the previous leader, and grants it to the new leader.
+
+The fail-over time of \sysname has two parts: failure detection and leader change.
+%detecting that a leader failed (failure detection), and the time to elect and change the leader (leader change). 
+%
+%OLD
+%When considering fail-over time, we mostly focus on the case in which the leader fails; failures of other replicas do not cause the system to become unavailable on quorum-based systems such as ours.
+%Fail-over time can be broken into two parts: failure detection and leader change time.  First, replicas must detect that the leader has failed, and then they must elect a new leader and have that leader take over replication. %%\Naama{Shifted from general failures to leader failure. Should we say something about how failures of non-leader replicas are easy to deal with? Can/should we have an experiment confirming that?}
+%
+% The permission-based strategy that \sysname employs to achieve fast replication in normal execution means that when a leader failure is detected, changing write permissions is on the critical path to recovery. Generally, changing access permissions in RDMA requires either reregistering memory regions or closing and reopening queue pairs. These operations are considerably more expensive than remote reads and writes, as they involve \Naama{kernel? Something else?}. We study several ways of changing permissions. Our implementation changes permissions by closing queue pairs in around $200\mu s$ per connection. We believe that RDMA hardware may significantly improve its permission changing latency over time, as this feature may not have been top priority for RDMA developers until now. \Naama{strengthen this last sentence.}
+%
+%
+For failure detection, traditional SMR systems typically use a timeout on heartbeat messages from the leader. Due to large variances in network latencies, timeout values are in the 10--100ms even with the fastest networks. This is clearly high for microsecond apps. \sysname uses a conceptually different method based on a pull-score mechanism over RDMA. The leader increments a heartbeat counter in its local memory, while other replicas use RDMA to periodically read the counter and calculate a badness score. The score is the number of successive reads that returned the same value. Replicas declare a failure if the score is above a threshold, corresponding to a timeout. Different from the traditional heartbeats, this method can use an aggressively small timeout without false positives because network delays slow down the reads rather than the heartbeat. In this way, \sysname detects failures usually within ${\sim}$600 microseconds.
+This is bottlenecked
+by variances in process scheduling, as we discuss later.
+
+For leader change, the latency comes from the cost of changing RDMA write permissions, which with current NICs are hundreds of microseconds. This is higher than we expected: it is far slower than RDMA reads and writes, which go over the network. We attribute this delay to a lack of hardware optimization. RDMA has many methods to change permissions: (1) re-register memory regions, (2) change queue-pair access flags, or (3) close and reopen queue pairs. We carefully evaluate the speed of each method and propose a scheme that combines two of them using a fast-slow path to minimize latency. Despite our efforts, the best way to cut this latency further is to improve the NIC hardware.
+%: we first attempt to change QP access flags (${\sim}$200 $\mu s$ per connection); if this causes errors due to in-flight operations, we resort to resetting the QP (${\sim}$100 ms per connection). In our experiments, the slow permission change was virtually never triggered.
+%
+%We believe that RDMA hardware may significantly improve its permission changing latency over time, as this feature may not have been top priority for RDMA developers until now. %\Naama{strengthen this last sentence.}
+%
+%
+%The permission-based strategy that \sysname employs to achieve fast replication in normal execution means that when a leader failure is detected, changing write permissions is on the critical path to recovery. Generally, changing access permissions in RDMA requires either (1) re-registering memory regions, (2) changing queue-pair access flags, or (3) closing and reopening queue pairs. These operations are considerably more expensive than remote reads and writes.
+%, as they involve \Naama{kernel? Something else?}. 
+%We study several ways of changing permissions. Our implementation uses a fast-slow path approach to changing permissions: we first attempt to change QP access flags ($\sim$$200\mu s$ per connection); if this causes errors due to in-flight operations, we resort to resetting the QP ($\sim$$100 ms$ per connection). In our experiments, the slow permission change was virtually never triggered. We believe that RDMA hardware may significantly improve its permission changing latency over time, as this feature may not have been top priority for RDMA developers until now. %\Naama{strengthen this last sentence.}
+
+
+%Fast permission changing alone cannot provide fast fail-over time. The failure detection itself must be carefully designed to operate in only a couple hundred microseconds without yielding many false positives. This is due to large variances in network and processing speeds. Many SMR systems rely on a `push-timeout' failure detection mechanism; the leader sends regular `heartbeat' messages to all other replicas to show it is still active, and other replicas timeout on the leader if they don't receive a heartbeat message within a predetermined interval. With such mechanisms, variance in latency can come from two independent resources: the network and the leader's processing speed. Thus, the timeout must be picked conservatively to avoid frequent false positives, and is often set to 10--100ms. In \sysname, we adopt a `pull-score' mechanism instead; the leader increments a counter to represent its heartbeat locally, and other replicas periodically query it using RDMA read. In this way, the variance in network speed is encapsulated in the RDMA read and cannot cause false positive failure detection. Replicas then maintain a `badness-score' for the leader, roughly corresponding to how many times they read its heartbeat without seeing an increment. A failure is detected if this score grows beyond a certain threshold. Experimental evaluation shows that this `pull-score' mechanism can usually detect failures within $\sim$$200 \mu s$.
+%\Naama{Paragraph about failure detection. Points to mention: by using reads of local heartbeats and no explicit timeout, we do not rely on network variance for detecting failure. Bring up point about how with fast recovery, it might be worth switching leaders when the current leader is scheduled out? Other systems usually choose a static timeout to detect failure, usually around 10-100ms. Mention that testing shows that other systems don't work with timeouts comparable to our detection time. Mention dynamic timeout of DARE? pull-score, push-timeout.}
+
+We prove that 
+\sysname provides strong consistency in the form of linearizability~\cite{HW90}, despite crashes and 
+asynchrony, and it ensures liveness under the
+same assumptions as Paxos~\cite{paxos}.
+%in an eventually synchronous system with a majority of correct replicas.  \Naama{our proof shows we terminate if eventually there is a single correct leader that doesn't change. However, we don't consider the leader election mechanism.}
+
+We implemented \sysname
+%in approximately 3000 lines of C 
+and used it to replicate several apps:
+  a financial exchange app called Liquibook~\cite{liquibook},
+  \redis{}, \memcached{},
+  and an RDMA-based key-value stored called HERD~\cite{kalia2014using}.
+  
+We evaluate \sysname extensively, by studying its
+  replication latency stand-alone or integrated into each of the
+  above apps.
+We find that, for some of these apps (Liquibook, HERD), 
+  \sysname is the only viable replication system that incurs a reasonable overhead.
+This is because \sysname's latency is significantly lower by a factor of at least
+   2.7${\times}$ compared to other replication systems.
+We also report on our study of \sysname's fail-over latency, with a breakdown
+  of its components, suggesting ways to improve
+  the infrastructure to further reduce the latency.
+%  showing that RDMA permission change is a significant contributor.
+  
+%Our evaluation shows that \sysname achieves latencies as low as 1.48 microseconds, and is between $2.4$ and $6$ times faster than 
+%state-of-the-art protocols in normal execution. 
+%\sysname can fail-over in around $600\mu s$, representing an order of magnitude improvement over the recovery times of comparable SMR systems.
+
+\sysname has some limitations.
+First, \sysname relies on RDMA and so it is suitable only for networks with RDMA, 
+  such as local area networks, but not across the wide area.
+Second, \sysname is an in-memory system
+  that does not persist data in
+  stable storage---doing so would add additional latency
+  dependent on the device speed.
+ \footnote{For fairness, all SMR systems that
+   we compare against also operate in-memory.}
+However, we observe that the industry is working on extensions of RDMA for persistent memory, whereby RDMA writes can be flushed at a remote persistent memory with minimum latency~\cite{rdmapmem}---once available, this extension
+  will provide persistence for \sysname.
+%REVISIT\mka{also  cite virendra's paper? Is it published?}
+
+% Third, while \sysname takes $1.48$ microseconds
+%   in several settings, this latency depends on other
+%   factors: replication degree,
+%   request size, and network latency.
+% \sysname's latency increases with
+%   larger replication degree, request size, or
+%   network latency.
+% However, latency degrades gracefully with
+%   these parameters, as shown in the evaluation.
+
+To summarize, we make the following contributions:
+
+\begin{itemize}
+\item We propose \sysname, a new SMR system with low replication and fail-over latencies.
+
+\item To achieve its performance, \sysname leverages RDMA permissions and a scoring mechanism over heartbeat counters.
+
+%\item Our protocol introduces fundamentally new techniques to replicate requests and fail-over the system.
+
+\item We give the complete correctness proof of \sysname\ifcamera~\cite{fullversion}\fi.
+\item We implement \sysname, and evaluate both its raw performance and its performance in microsecond apps. Results show that \sysname significantly reduces replication latencies to an acceptable level for microsecond apps. 
+\item \sysname{'s} code is available at:\\ \url{https://github.com/LPD-EPFL/mu}.
+\end{itemize}
+
+One might argue that \sysname is ahead of its time, as
+  most apps today are not yet microsecond apps.
+However, this situation is changing.
+We already have important microsecond apps in areas
+  such as trading, and more will come
+  as existing timing requirements
+  become stricter and new systems emerge as
+  the composition of a large number of 
+  microservices (\S\ref{sec:mu}).

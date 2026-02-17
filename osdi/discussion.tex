@@ -1,0 +1,37 @@
+\section{Conclusion}\label{sec:discussion}
+
+%\Naama{Need to update to fit new story.}
+
+
+Computers have progressed from batch-processing systems that operate at the time scale of minutes, 
+to progressively lower latencies in the seconds, then milliseconds, and now we are in the microsecond revolution.
+Work has already started in this space at various
+layers of the computing stack. Our contribution fits in this context, by providing
+generic microsecond replication for microsecond apps.
+
+\sysname is a state machine replication system that can replicate microsecond applications with little overhead. 
+This involved two goals: achieving low latency on the common path,
+and minimizing fail-over time to maintain high availability.
+To reach these goals, \sysname relies on 
+(a) RDMA permissions to replicate a request with a single one-sided operation, as well as
+(b) a failure detection mechanism that does not
+incur false positives due to common network delays---a property that
+permits \sysname to use aggressively small timeout values.
+
+%The code of \sysname is available as an open-source system.
+
+\rmv{
+Our aim in this work was to build an SMR system that can replicate microsecond applications without prohibitive overhead. 
+This involved two parts: achieving extremely low latency on the common path to avoid impeding the application, 
+and minimizing fail-over time to maintain high availability. To that end, we introduce \sysname, which relies on RDMA permissions to achieve  single one-sided round trip replication in the common case and fast fail-over time. 
+%The common-case replication in \sysname boils down to a single one-sided RDMA write by the leader replica, thus achieving network speed for replication.
+%Essentially, the cost of achieving consensus in this case is that of completing an RDMA write message (at a majority of replicas in parallel). 
+%\sysname can detect a slow or failed leader within $XX\mu s$ using our pull-score failure detection technique; once a failure is detected, switching to a new leader involves changing access permissions for the logs of each replica. 
+%This takes around $200-400\mu s$ depending on the network load, leading to a total fail-over time of around $XX\mu s$. 
+We note that so far, permission changing has not been optimized by developers of RDMA, since it has not shown up in performance-critical tasks. 
+In this paper, we argue that permission switches is a key feature of RDMA that is worth optimizing. 
+As RDMA hardware improves this feature, \sysname's fail-over time can decrease even further.
+We demonstrate through thorough evaluation that %even without further hardware optimizations, 
+\sysname provides a practical way to increase the availability of microsecond-scale applications.
+}
+

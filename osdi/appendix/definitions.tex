@@ -1,0 +1,15 @@
+\subsection{Definitions}
+\begin{definition}[Quorum]
+A \textit{quorum} is any set that contains at least a majority of the processes.
+\end{definition}
+
+\begin{definition}[Decided Value]
+We say that a value $v$ is \textit{decided} at index $i$ if there exists a quorum $Q$ such that for every process $p \in Q$, $p$'s log contains $v$ at index $i$.
+\end{definition}
+%\Naama{We need to prove that once a value is `decided' under this definition, it can never be overwritten at any process in $Q$.}
+
+\begin{definition}[Committed Value]
+We say that a value $v$ is \textit{committed} at process $p$ at index $i$ if $p$'s log contains $v$ at index $i$, such that $i$ is less than $p$'s FUO.
+\end{definition}
+
+%\Naama{Side note: Decided value is a global property, and committed value is a local property. Should we change their names a bit to make it more obvious they are not `at the same level'?}\igor{Agreed.}

@@ -1,0 +1,435 @@
+\section{Evaluation}
+
+
+
+Our goal is to evaluate whether \sysname indeed provides viable replication for microsecond computing. We aim to answer the following questions in our evaluation:
+\begin{itemize}
+    \item What is the replication latency of \sysname? 
+    How does it change with payload size and the application being replicated?
+    How does \sysname compare to other solutions? 
+    \item What is \sysname's fail-over time? 
+    %\item How does \sysname scale as more replicas are used?
+    \item What is the throughput of \sysname?
+\end{itemize}
+
+We evaluate \sysname on a 4-node cluster, the details of which are given in Table~\ref{tab:hwspecs}.
+% where each node has two Intel Xeon E5-2640 v4 CPUs @ 2.40GHz (20 cores, 40 threads total per node), 256 GB of RAM equally split across the two NUMA domains, and a Mellanox Connect-X 4 NIC. All 4 nodes are connected to a single 100 Gbps Mellanox MSB7700 switch through 100 Gbps Infiniband. 
+%
+All experiments show 3-way replication, which accounts
+for most real deployments~\cite{hunt2010zookeeper}.
+% With more replicas, replication latencies
+% increase gradually with the number of replicas,
+% up to 35\% higher for \sysname (for 9 replicas) and
+% a larger increase than \sysname for other systems at every replication level.
+
+%\Naama{In our experiments from the eurosys submission, both APUS and DARE doubled in latency between 3-way and 9-way replication, and we increased by 35\%.}
+
+{\footnotesize
+\begin{table}[ht!]
+%\begin{center}
+    \centering
+    \caption{\CRExtra{Hardware details of machines.}}
+	\begin{tabular}{cm{0.64\linewidth}}
+	\toprule
+\textbf{CPU}		&   2x Intel Xeon E5-2640 v4 @ 2.40GHz \\
+\textbf{Memory}	&   2x 128GiB \\
+\textbf{NIC}		&   Mellanox Connect-X 4 \\
+\textbf{Links}   &   100 Gbps Infiniband \\
+\textbf{Switch}  &   Mellanox MSB7700 EDR 100 Gbps  \\
+\textbf{OS}      &   Ubuntu 18.04.4 LTS \\
+\textbf{Kernel}  &   \texttt{4.15.0-72-generic} \\
+\textbf{RDMA Driver} & Mellanox OFED \texttt{4.7-3.2.9.0} \\
+	    \bottomrule
+	\end{tabular}
+    \label{tab:hwspecs}
+\end{table}
+}
+
+We compare against APUS~\cite{wang2017apus}, DARE~\cite{poke2015dare}, and Hermes~\cite{hermes} where possible. 
+\mka{Added sentence about HovercRaft}
+The most recent system, HovercRaft~\cite{hovercraft}, also
+  provides SMR but its latency at 30--60 microseconds is
+  substantially higher than the other systems, so we
+  do not consider it further.
+For a fair comparison, we disable APUS's persistence to stable storage, since \sysname, DARE, and Hermes all provide only in-memory replication.
+
+We measure time using the POSIX \texttt{clock\_gettime} function, with the \texttt{CLOCK\_MONOTONIC} parameter. 
+In our deployment, the resolution and overhead of \texttt{clock\_gettime} is around $16$--$20ns$~\cite{uarch-bench}. In our figures, we show bars labeled with the median latency, with error bars showing 99-percentile and 1-percentile latencies.
+These statistics are
+computed over 1 million samples with a payload of 64-bytes each, unless otherwise stated.
+
+\paragraph{Applications. }
+We use \sysname to replicate several microsecond apps:
+  three key-value stores, as well as
+  an order matching engine for a financial exchange.
+%four applications; three key-value stores (Redis~\cite{redis}, Memcached~\cite{memcached}, and HERD~\cite{kalia2014using}, and an order matching application called Liquibook~\cite{liquibook}.
+
+The key-value stores that we replicate with \sysname are Redis~\cite{redis}, Memcached~\cite{memcached}, and HERD~\cite{kalia2014using}. 
+For the first two, the client is assumed to be on a different cluster, and connects to the servers over TCP. In contrast, HERD is a microsecond-scale RDMA-based key-value store. We replicate it over RDMA and use it as an example of a microsecond application.
+Integration with the three applications requires 183, 228, and 196 additional lines of code, respectively.
+%\Naama{Explain direct vs handover way to attach to the application here?}
+
+The other app is in the context of financial exchanges, in
+  which parties unknown to each other submit buy and sell orders of
+  stocks, commodities, derivatives, etc.
+At the heart of a financial exchange is an order matching 
+  engine~\cite{ordermatching}, such as Liquibook~\cite{liquibook},
+  which is responsible for matching the buy and sell orders of the parties.
+We use \sysname to replicate Liquibook.
+Liquibook's inputs are buy and sell orders.
+We created an unreplicated client-server version of Liquibook using
+   eRPC~\cite{erpc}, and then replicated this system using \sysname.
+%that, in which we expose the buy-sell interface over the network using eRPC. We then replicate each Liquibook order when it arrives at the server,  before it is inserted into Liquibook. 
+The eRPC integration and the replication required 611 lines of code in total.
+%, and preserves Liquibook's microsecond-scale latency per request.
+
+
+%We integrate \sysname with four applications; two microsecond applications---an RDMA-based key-value store (HERD)~\cite{kalia2014using}, and an order matching application, Liquibook~\cite{liquibook}---and two more traditional, but slower key-value stores: Redis~\cite{redis} and Memcached~\cite{memcached}. 
+%The first two allow us to highlight the effect of \sysname on microsecond applications, and the latter two show the advantages of \sysname on more traditional applications. 
+%Integration with these applications requires  196, 183, and 228 additional lines of code, respectively. \Naama{What about Liquibook}? For Redis and Memcached, the client is assumed to be on a different cluster, and connects to the servers over TCP.
+%\Naama{More details on how we integrated with these applications.}
+
+
+
+
+
+\subsection{Common-case Replication Latency}\label{sec:replication-latency}
+
+We begin by testing the overhead that \sysname introduces in normal execution, when there is no leader failure. For these experiments, we first measure raw replication latency and compare \sysname to other replication systems, as well as to itself under different payloads and attached applications.
+%as well as the overall latency of a request, including the latency of the application. 
+%
+% We then evaluate client-to-client application latency.
+%we consider the replication's effect on the overall latency of applications. For this, 
+%We split the applications by their unreplicated latency; we first focus on microsecond-scale applications (HERD and Liquibook), and then consider traditional key-value stores (Redis and Memcached).
+
+
+\paragraph{Effect of Payload and Application on Latency}
+We first study \sysname in isolation, to understand its replication latency under different conditions.
+
+We evaluate the raw replication latency of \sysname in two settings: \emph{standalone} and \emph{attached}.
+In the standalone setting, \sysname runs just the replication layer with no application and no client; the leader
+  simply generates a random payload and invokes
+  \texttt{propose()} in a tight loop.
+In the attached setting, \sysname is integrated into
+  one of a number of applications; the application client
+  produces a payload and invokes 
+  \texttt{propose()} on the leader.
+These settings could impact latency differently,
+  \sysname and the application could interfere with each other.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\columnwidth]{osdi/osdi-figures/exp1-usvsus.pdf}
+    \caption{Replication latency of \sysname integrated into
+    different applications
+    [\memcached (mcd), Liquibook (LiQ), Redis (rds), HERD]
+    and payload sizes. Bar height and numerical labels show median latency; error bars show 99-percentile and 1-percentile latencies.}
+    \label{fig:usvsus}
+\end{figure}
+
+Figure~\ref{fig:usvsus} compares standalone to attached runs as we vary payload size. Liquibook and Herd allow only one payload size (32 and 50 bytes), so they have only one bar each in the graph, while Redis and Memcached have many bars. 
+%We found that the latency of \sysname's replication for Redis and Memcached for 32 and 50 bytes was the same as the latency of those applications at 64 bytes (median latency of $1.70\mu s$), so we omit them here. Below, we explain why this latency remains constant. \Naama{Is this accurate?}
+
+ 
+%This creates interference between the application and consensus layers in the processor cache.
+%With {\sysname}'s low replication overhead, this difference can affect the latency, as reflected by our measurements;
+
+We see that the standalone version slightly outperforms the attached runs, for all tested applications and payload sizes. 
+This is due to processor cache effects; in standalone runs, replication state, such as log and queue pairs, are always in cache, and the requests themselves need not be fetched from memory. This is not the case when attaching to an application.
+\CRExtra{Additionally, in attached runs, the OS can migrate application threads (even if \sysname's threads are pinned), leading to additional cache effects which can be detrimental to performance.}
+%when attaching to an application, the application itself brings data into cache, potentially evicting data needed for replication, like the log and the queue pair data. In contrast, in the standalone execution, the thread does not bring other data into cache, decreasing the number of cache misses during replication. 
+
+\sysname supports two ways of attaching to an application, which
+  have different processor cache sharing effects.
+The \emph{direct} mode uses the same thread to run both the
+  application and the replication, and so they share L1 and L2
+  caches.
+In contrast, the \emph{handover} method places the application
+  thread on a separate core from the replication thread, thus
+  avoiding sharing L1 or L2 caches.
+Because the application must communicate the request to
+  the replication thread, the handover method requires
+  a cache coherence miss per replicated request.
+This method consistently adds ${\approx}400$ns over the standalone   method. 
+For applications with large requests, this overhead might
+  be preferable to the one caused by the direct method, where
+  replication and application compete for CPU time.
+For lighter weight applications, the direct method is preferable.
+In our experiments, we measure both methods and show the best method for each application: Liquibook and HERD use the direct method, while Redis and Memcached use the handover method. 
+%Both Redis and Memcached bring in enough data into cache between server requests to completely evict all replication data from the L2 cache. This is the reason that \sysname's replication performance is so similar for these applications. Both HERD and Liquibook are lighter-weight applications that do not use as much data. This leads to their better replication latency.
+%\Naama{Mention different ways to attach to application here?}\igor{Yes, I think this is the right place.}
+
+%To verify that cache effects are indeed responsible for the latency jump, we also ran a modified version of the standalone mode; between every call to \texttt{propose}, we evict all L1/L2 cache contents. The results produced the same latencies as those we observe for \redis{} and \memcached{}, around $17$--$19\%$ slower than the non-evicting standalone run. This indicates that in both of these applications, enough data is being brought into cache between server requests to completely evict all replication data from the L2 cache. This also explains why runs attached to either \redis{} or \memcached{} yield the same latency; the amount of slowdown between the standalone and the attached run reaches a local maximum once all of the replication data gets evicted from L2, making many applications arrive at this latency.
+%\Naama{Is this paragraph still relevant?}
+
+%We can see that a run attached to HERD performs similarly, but slightly better (up to $6\%$ better) than runs attached to \redis{} or \memcached{}. This is because HERD is a lighter-weight application with a smaller working set. %\igor{and fewer system calls?}.
+%\Naama{Liquibook?}
+
+We see that for payloads under 256 bytes, standalone latency   
+  remains constant despite increasing payload size. 
+This is because we can RDMA-inline requests for these payload
+  sizes, so the amount of work needed to send a request remains practically the same.
+At a payload of 256 bytes, the NIC must do a DMA itself to fetch the value to be sent, which incurs a gradual increase in overhead
+as the payload size increases.
+However, we see that \sysname still performs well even at larger payloads quite well; at 512B, the median latency is only $35\%$ higher than the latency of inlined payloads.
+%\Naama{Why is the variance larger? What is the 99th percentile?}
+%at 1KB, the latency is at most $1.5\times$ higher than the latency of payloads that can be inlined, and this holds regardless of the replication factor. 
+
+
+
+\paragraph{Comparing \sysname to Other Replication Systems.}
+We now study the replication time of \sysname compared to other
+   replication systems, for various applications.
+This comparison is not possible for every pair of
+  replication system and application, because some
+  replication systems are incompatible with certain
+  applications.
+In particular, APUS works only with socket-based applications
+  (Memcached and Redis).
+%, since they rely on RDMA to achieve their speed. 
+In DARE and Hermes, the replication protocol is bolted onto 
+  a key-value store,
+  so we cannot attach it to the apps we consider---instead,
+  we report their performance with their key-value stores.
+
+
+%We now show the raw replication time of \sysname compared against that of other replication systems.
+%We cannot compare \sysname to the other replication systems on all applications we test, since not all replication systems can be attached to all applications. In particular, APUS works only with socket-based applications, and thus cannot be attached to RDMA-based ones. This means that we cannot compare against APUS for the microsecond applications.
+%, since they rely on RDMA to achieve their speed. 
+%DARE's replication protocol is implemented together with a key-value store application, and the two cannot be separated. Thus, we do not attach DARE to any of our tested applications. However, we are able to isolate DARE's replication latency from the latency of the key-value store. Furthermore, DARE's key-value store is RDMA-based, and achieves microsecond-scale puts and gets. We thus compare to DARE when considering microsecond-scale key-value stores, seeing DARE with its key-value store as an alternative to HERD with \sysname.
+%Hermes is similar to DARE in that it is inseparable from its own key-value store. However, unlike DARE, Hermes produces its values in a tight loop at each server, and does not allow for a value to come in from a remote client. 
+%\Naama{Finish explaining how the Hermes experiments are different.}
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\columnwidth]{osdi/osdi-figures/exp2_replication.pdf}
+    \caption{Replication latency of \sysname compared with other
+    replication solutions: DARE, Hermes, Apus on memcached (mcd),
+    and Apus on Redis (rds). Bar height and numerical labels show median latency; error bars show 99-percentile and 1-percentile latencies.
+    %Bars labeled with median latency.
+    %\mka{Is this different from other graphs?}
+    }
+    \label{fig:replication-usvsthem}
+\end{figure}
+
+\begin{figure*}[ht]
+    \centering
+    \includegraphics[width=0.99\textwidth]{osdi/osdi-figures/exp3-e2e-new.pdf}
+    
+    \caption{End-to-end latencies of applications. 
+    The first graph shows a financial exchange app
+       (Liquibook) unreplicated and replicated with \sysname. 
+    The second graph shows microsecond key-value 
+       stores: HERD unreplicated, HERD replicated with \sysname, and DARE.
+    The third graph shows traditional key-value stores: Memcached and Redis, unreplicated, as well as replicated with \sysname and APUS. 
+    Bar height and numerical labels show median latency; error bars show 99-percentile and 1-percentile latencies.
+%    Note scale change on the third graph.}
+    }
+    
+    \label{fig:endtoend}
+\end{figure*}
+
+
+
+Figure~\ref{fig:replication-usvsthem} shows the replication latencies of these systems.
+%We again measure just the consensus latency, leaving out the latency of the application itself. 
+%In cases where a competitor can replicate the same application as \sysname, we normalize that competitor's replication latency to the latency achieved by \sysname's replication when attached to the same application. In particular, we normalize APUS's replication latency on Redis to \sysname's with Redis, and APUS with Memcached to \sysname with Memcached. For DARE and Hermes, which have their own application, we normalize their latencies to \sysname's replication latency on the \emph{worst} application that we tested \Naama{namely, BLAH}, to make the comparison as fair as possible.
+%
+\sysname's median latency outperforms all competitors by at least $2.7\times$, outperforming APUS on the same applications by $4\times$. Furthermore, \sysname has smaller tail variation, with a difference of at most $500$ns between the 1-percentile and 99-percentile latency. In contrast, Hermes and DARE both varied by more than $4\mu s$ across our experiments, with APUS exhibiting 99-percentile executions up to $20\mu s$ slower (cut off in the figure). We attribute this higher variance to two factors: the need to involve the CPU of many replicas in the critical path (Hermes and APUS), and sequentializing several RDMA operations so that their variance aggregates (DARE and APUS). %\Naama{Does this make sense? Other reasons for high variance?}
+%\Naama{More details once we have numbers...}
+
+
+
+\subsection{End-to-End Application Latency} Figure~\ref{fig:endtoend} shows the end-to-end latency of our tested applications, which
+includes the latency incurred by the application and by
+replication (if enabled).
+We show the result in three graphs corresponding to three
+  classes of applications.
+
+\CR{In all three graphs, we first focus on the unreplicated latency of these applications, so as to characterize the workload distribution. 
+Subsequently, we show the latency of the same applications under replication with \sysname and with competing systems, so as to exhibit the overhead of replication.}
+
+The leftmost graph is for Liquibook.
+The left bar is the unreplicated version, and the right
+  bar is replicated with \sysname.
+We can see that the median latency of Liquibook without replication is $4.08\mu s$, and therefore the overhead of replication is around $35\%$.
+There is a large variance in latency, even in the unreplicated
+  system.
+This variance comes from the client-server
+  communication of Liquibook, which is based on eRPC.
+This variance changes little with replication. 
+The other replication systems cannot replicate Liquibook
+  (as noted before, DARE and Hermes 
+  are bolted onto their app, and APUS can replicate only socket-based applications).
+However, extrapolating their latency 
+   from Figure~\ref{fig:replication-usvsthem}, they would add
+   unacceptable overheads---over 100\% overhead for the
+   best alternative (Hermes).
+%As already shown in Figure~\ref{fig:usvsus}, the replication overhead introduced by \sysname is only around $1.4\mu s$, with very small variance. In this experiment, 
+
+%Figure~\ref{fig:microRep} shows the replication of microsecond-scale key-value stores. 
+%To highlight the replication overhead for an easier comparison, Figure~\ref{fig:microRep}a shows just the (attached) replication latency of \sysname and DARE \Naama{and Hermes?}, without the latency of the application itself. \sysname outperforms DARE by a factor of \Naama{$\sim$$2$}. 
+
+The middle graph in Figure~\ref{fig:endtoend} shows the client-to-client latency of replicated and unreplicated microsecond-scale key-value stores. The first bars in orange
+show HERD unreplicated and HERD replicated with \sysname.
+%The bar is split into application latency and latency introduced from the replication. 
+The green bar shows DARE's key-value store with its own
+  replication system.
+% We note that DARE uses not only a different replication system, but also a different underlying key-value store. We therefore consider HERD replicated with \sysname as an alternative to the replicated key-value store of DARE. 
+The median unreplicated latency of HERD is $2.25\mu s$, and \sysname adds $1.34\mu s$. While this is a significant overhead ($59\%$ of the original latency), this overhead is lower than any alternative. 
+We do not show Hermes in this graph since Hermes does not allow for a separate client, and only generates its requests on the servers themselves. 
+%Thus, a comparison with Hermes would be unfair.
+%The replication parts of the bars correspond to the data shown in more detail in Figure~\ref{fig:microRep}a. 
+HERD replicated with \sysname is the best option for a replicated key-value store, with overall median latency $2\times$ lower than the next best option, and a much lower variance.
+%\Naama{Why is the variance for DARE so high?}
+
+
+
+\CR{The rightmost graph in Figure~\ref{fig:endtoend} shows the replication of the traditional key-value stores, Memcached and Redis. 
+The two leftmost bars show the client-to-client latencies of unreplicated Memcached and Redis, respectively. 
+The four rightmost bars show the client-to-client latencies under replication with \sysname and APUS. 
+Note that the scale starts at $100\mu s$ to show better precision.}
+%\Naama{Why do redis and memcached without replication take different amounts of time depending on whether we run them with APUS or \sysname?}
+%For now, I am blaming this on high variance.
+
+%The variance of both Redis and Memcached is quite high, and is responsible for the different median unreplicated latencies that we observe in the different tests, despite running the experiments \Naama{XX} times each. This is due to the client communicating with the server over TCP.
+
+%Despite the high variance, we can see that both applications experience latencies of around $105\mu s$ per request, without replication. This latency greatly depends on the network on which they are run. 
+\CR{\sysname incurs an overhead of around $1.5\mu s$ to replicate these apps, which is about $5\mu s$ faster than replicating with APUS.
+For these TCP/IP key-value stores, client-to-client latency under replication with \sysname is around $5\%$ lower than client-to-client latency under replication with APUS. 
+With a faster client-to-app network, this difference would be bigger. In either case, \sysname provides fault-tolerant replication with essentially no overhead for these applications.}
+
+\paragraph{Tail latency.} From Figures~\ref{fig:replication-usvsthem} and~\ref{fig:endtoend}, we see that
+applications replicated with DARE and APUS
+show large tail latencies and a skew
+towards lower values (the median latency is closer to the 1-st percentile than the 99-th percentile).
+%than for those replicated with \sysname. 
+%For DARE, APUS and Liquibook, 
+We believe this tail latency occurs
+%We do not introduce any skew when generating the workload, thus we believe that the skew occurs 
+because DARE and APUS must handle several
+successive RDMA events on their critical path, where each event is susceptible
+to delay, thereby inflating the tail. Because \sysname involves
+fewer RDMA events, its tail is smaller.
+%staggering delays; if one event is delayed, all subsequent events which depend on it will be delayed as well, resulting in a longer tail. 
+%The first two systems use a combination of libev and RDMA polling, while Liquibook makes use of eRPC that has its own event-loop implementation. Our hypothesis is supported by Figure~\ref{fig:replication-usvsthem}, which shows high skew for the replication latencies of DARE and APUS (because in these systems the event loop is involved in replication), but not for Liquibook (because in Liquibook the event loop is not involved in replication).
+
+Figure~\ref{fig:endtoend} shows an even greater tail for the end-to-end latency of replicated applications. Liquibook has a large tail even in its unreplicated version,
+which we believe is due to its client-server communication, since the replication of Liquibook with \sysname has a small
+tail (Figure~\ref{fig:replication-usvsthem}).
+For \memcached{} and \redis{}, additional sources of tail latency are cache effects and thread migration, as discussed in Section~\ref{sec:replication-latency}. This effect is particularly pronounced when replicating with APUS (third panel of Figure~\ref{fig:endtoend}), because the above contributors are compounded.
+
+
+
+
+\subsection{Fail-Over Time}
+We now study \sysname's fail-over time. In these experiments, we run the system and subsequently introduce a leader failure. To get a thorough understanding of the fail-over time, we repeatedly introduce leader failures (1000 times) and plot a histogram of the fail-over times we observe. We also time the latency of permission switching, which corresponds to the time to change leaders after a failure is detected. The detection time is the difference between the total fail-over time and the permission switch time.
+% We run this experiment with the Liquibook application.
+
+We inject failures by delaying the leader, thus making it become temporarily unresponsive. This causes other replicas to observe that the leader's heartbeat has stopped changing, and thus detect a failure.
+%
+%We introduce a leader failure by pausing the leader's heartbeat thread. This causes other replicas to observe that the leader's heartbeat has stopped changing, and thus detect a failure. This type of failure leaves the old leader `active' and trying to commit values despite the election of a new leader. This method therefore also serves to verify the safety of \sysname under concurrently active leaders.
+
+
+%We measure time at two different places in the system.
+%First, we measure the \emph{client fail-over time};
+%  this is the time from when the client first notices that the
+%  old leader has failed until when the client's request is accepted at the new leader.
+%This measurement can underestimate the real fail-over time, as the client does not immediately become aware of a leader failure. However, this measurement is relevant, as it represents the downtime observable to the client.
+%The second measurement we make is the \emph{permission switch time}. This measurement is done at the new leader: from the moment it first sends permission requests to the other replicas, until it receives permissions from a majority.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\columnwidth]{osdi/osdi-figures/histogram_separate.pdf}
+    
+    \caption{Fail-over time distribution.}
+    \label{fig:failover}
+\end{figure}
+
+Figure~\ref{fig:failover} shows the results. We first note that the total fail-over time is quite low; 
+% the mean fail-over time is $883\mu s$, with a standard deviation of $55\mu s$. \Naama{Should we just mention median and 99-percentile, like we did for the other experiments?} 
+the median fail-over time is $873\mu{s}$ and the 99-percentile fail-over time is $947\mu s$, still below a millisecond. This represents an order of magnitude improvement over the best competitor at
+${\approx}10$ ms (HovercRaft~\cite{hovercraft}). 
+%We first note that the client fail-over time and the permission switch time are distributed similarly. This indicates that the client fail-over time is primarily influenced by the time to change permissions when switching leaders. 
+%Thus, as RDMA hardware optimizes this feature, it would directly improve fail-over time in \sysname.  
+
+The time to switch permissions constitutes about $30\%$ of the total fail-over time, with mean latency at $244\mu s$, and 99-percentile at $294\mu s$.
+Recall that this measurement in fact encompasses two changes of permission at each replica; one to revoke write permission from the old leader and one to grant it to the new leader. Thus, improvements in the RDMA permission change protocol would be doubly amplified in \sysname's fail-over time.
+
+The rest of the fail-over time is attributed to failure detection (${\approx}600 \mu s$). Although our pull-score mechanism does not rely on network variance, there is still variance
+introduced by process scheduling (\eg, in rare cases, the leader process is descheduled by the OS for tens of microseconds)---this is what prevented us from using 
+smaller timeouts/scores and it is an area under active investigation for microsecond apps~\cite{muback,shenango,zygos,arachne}.
+
+% We observed detection times at around $800\mu s$ with a single heartbeat thread on the leader. To mitigate this, we have several threads on the leader increment the heartbeat, and only lower the leader's score if none of them made any changes. In this way, it is less likely that all heartbeat threads will be scheduled out at once. This technique allows us to decrease detection time by around $200\mu s$, leading to the times reported in Figure~\ref{fig:failover}.
+
+%We note that just over $50\%$ of the permission switches we measured occurred within $200$--$240\mu s$, and $95\%$ took between $180$--$280\mu s$. \Naama{verify numbers.} Indeed, out of $600$ measurements, it never took \sysname more than $285\mu s$ to fail-over to a new leader. This represents an improvement of almost two orders of magnitude over DARE's fail-over time, and even more for the other systems we tested (results not shown). \Naama{Would be great to include something about DARE not being able to do better with a smaller timeout.}
+
+%We measure the throughput of the system throughout, with the expectation that while the system is switching leaders, the throughput drops to zero. 
+
+
+\subsection{Throughput}
+While \sysname optimizes for low latency, in this section we evaluate the throughput of \sysname. 
+%Our goal is to show that the throughput of \sysname is reasonable.\igor{I wouldn't say this, since 'reasonable' is subjective. I would just skip the previous sentence.} 
+In our experiment, we run a standalone
+microbenchmark (not attached to an application). We increase throughput in two ways: by batching requests together before replicating, and by allowing multiple outstanding requests at a time. In each experiment, we vary the maximum number of outstanding requests allowed at a time, and the batch sizes. 
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\columnwidth]{osdi/osdi-figures/exp7-latthru-large-sizes.pdf}
+
+    \caption{Latency vs throughput. Each line represents a different number of allowed concurrent outstanding requests. Each point on the lines represents a different batch size. Batch size shown as annotation close to each point.}
+    \label{fig:throughput}
+\end{figure}
+
+Figure~\ref{fig:throughput} shows the results in a
+  latency-throughput graph.
+Each line represents a different max number of outstanding requests, and each data point represents a different batch size. As before, we use 64-byte requests.
+
+We see that \sysname reaches high throughput with this simple technique. At its highest point, the throughput reaches $47$ Ops/$\mu s$ with a batch size of 128 and 8 concurrent outstanding requests, with per-operation median latency at $17\mu s$. Since the leader is sending requests to two other replicas, this translates to a throughput of $48$Gbps, around half of the NIC bandwidth. 
+%\igor{I computed the throughput as $47 ops/\mu{s} * 10^6 \mu{s}/s * 64 Bytes/Op * 8 bits/Byte * 10^{-9}Gb/bit * 2 replicas = 48Gbps$. Where does the difference come from?}
+%However, note that higher replication factors, while executing fewer operations per microsecond, in fact send more data, since data is sent to more replicas; a batch size of 128 with 9-way replication achieves a throughput of $53$Gbps, with the leader sending messages to 8 replicas, and $52$Gbps with 7-way replication, which is over half the bandwidth of the Connect-X4 NIC. 
+
+Latency and throughput both increase as the batch size increases. Median latency is also higher with more concurrent outstanding requests. However, the latency increases slowly, remaining at under $10\mu s$ even with a batch size of $64$ and $8$ outstanding requests.
+
+There is a throughput wall at around $45$ Ops/$\mu s$, with latency rising sharply. This can be traced to the transition between the client requests and the replication protocol at the leader replica. The leader must copy the request it receives into a memory region prepared for its RDMA write. This memory operation becomes a bottleneck. We could optimize throughput further by allowing direct contact between the client and the follower replicas. However, 
+%
+%\mka{Added next}
+%While we could try to optimize throughput further, 
+that may not be useful
+  as 
+  %(1) the throughput of the application itself may be lower than the replication throughput at 10 requests/$\mu$s, and
+  %(2) 
+the application itself might need some of the network bandwidth for its own operation, so the replication protocol should not saturate the network.
+
+
+
+Increasing the number of outstanding requests while keeping the batch size constant substantially increases throughput at a small latency cost. The advantage of more outstanding requests is largest with two concurrent requests over one. Regardless of batch size, this allows substantially higher throughput at a negligible latency increase: allowing two outstanding requests instead of one increases latency by at most $400ns$ for up to a batch size of 32, and only $1.1\mu s$ at a batch size of 128, while increasing throughput by $20$--$50\%$ depending on batch size. This effect grows less pronounced with higher numbers of outstanding requests.
+
+Similarly, increasing batch size increases throughput with a low latency hit for small batch sizes, but the latency hit grows for larger batches. Notably, using 2 outstanding requests and a batch size of 32 keeps the median latency at only $3.4\mu s$, but achieves throughput of nearly $30$ Ops/$\mu s$. %\Naama{Is this the best data point to point out? Something else? Or a more general pattern?}
+
+%\subsection{Higher Replication Factor}
+%In all experiments so far, we used 3-way replication. This is the most common replication factor used in practice, as it is the smallest number of replicas that allows a system to tolerate 1 server failure. However, we now evaluate how \sysname scales as the number of replicas grows, to see whether it remains practical in situations in which higher fault tolerance is required. 
+
+%For this test, we run on a 10-node cluster. \Naama{Describe machines in this cluster.}
+%Note that we expect everything to run slower on this cluster than the one on which we ran the rest of our experiments, since it only has Connect-X3 NICs. In Figure~\ref{fig:newcluster} we show the standalone 3-way replication latency of \sysname on our main cluster versus the same setting on the new larger cluster. As expected, the new cluster yields latencies around $XXX$ times slower. 
+
+%Thus, to show how \sysname scales with the number of replicas, we normalize the replication latencies by the 3-way replication latencies.
+%How does \sysname scale with the number of replicas? Here we test on a larger cluster that has 10 machines to show a replication factor of up to 9.
+
+%\subsection{Optimizations}
+
+%\begin{figure}
+%    \centering
+%    \includegraphics[width=0.7\columnwidth]{figures/exp0-opt-alt-half.pdf}
+%    \caption{Caption}
+%    \label{fig:opt-breakdown}
+%\end{figure}
+
+%\Naama{Remind the reader about our optimizations}
+%Figure~\ref{fig:opt-breakdown} shows the effect of each optimization in isolation, as well as the two combined. The first bar shows the latency \sysname achieves without any optimizations. \sysname with pinning is labeled as `P', and inlining is labeled `I'. We show the latencies produced with 3-way replication, and run with a 64-byte payload, so that inlining is possible.
+
+%To see meaningful comparisons, we also show a setting (labeled `B-P') in which we purposefully pin the threads to a CPU on a \emph{different} NUMA domain from the NIC. On the machines in our cluster, co-locating the threads, memory, and NIC is automatically done. Thus, there is negligible difference in latency between the unoptimized version of \sysname and the one with the pinning optimization, whereas the bad pinning strategy raises the latency by around $25\%$. 
+%However, not all machines automatically co-locate the NIC, threads, and memory; indeed, in earlier experiments on another cluster, we observed that threads were placed on a different node from the NIC by default. \Naama{Actually, does the lab cluster do this automatically? If not, can change the plot slightly and shorten the description.}
+
+%Write inlining provides an improvement of about $20\%$, regardless of whether or not the threads are pinned on the same node as the NIC. This is because inlining saves a local DMA transfer from the NIC; this DMA transfer takes longer if the NIC is not in the same NUMA domain as the memory.

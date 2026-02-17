@@ -1,0 +1,148 @@
+\section{Overview of \sysname}
+
+\subsection{Architecture}
+
+  \begin{figure*}
+    \centering
+    \includegraphics[width=\textwidth]{figures/architecture4}
+    \caption{Architecture of \sysname. Grey color shows \sysname components.
+    A replica is either a leader or a follower, with different behaviors.
+    The leader captures client requests and writes them to the local
+    logs of all replicas. Followers replay the log to inject the client
+    requests into the application. A leader election component includes
+    a heartbeat and the identity of the current leader. A permission
+    management component allows a leader to request write permission to the
+    local log while revoking the permission from other nodes. \mka{Rachid says: Should we use the Paxos terminology?}
+    }
+    \label{fig:arch}
+\end{figure*}
+
+Figure~\ref{fig:arch} depicts the architecture of \sysname.
+At the top, a client sends requests to an application and
+  receives a response.
+We are not particularly concerned about how the client communicates
+  with the application: it can use a network,
+  a local pipe, a function call, etc.
+%Our goal with \sysname is to replicate an application that
+%   receives requests from a client and sends replies back to that
+%   client.
+We do assume however that this communication is amenable to being
+  captured and injected.
+%Under this assumption, \sysname{} relies on two mechanisms to interact with the application.
+That is, there is a mechanism to capture requests from the client
+  before they reach the application,
+  so we can forward these requests to the replicas; a request
+  is an opaque buffer that is not interpreted by \sysname.
+Similarly, there is a mechanism to inject requests into the
+  app.
+Providing such mechanisms requires changing the
+  application; however, in our experience, the changes are small
+  and non-intrusive.\mka{Rachid says: We do not do that in our applications?}
+These mechanisms are standard in any SMR system.
+
+\rmv{  
+  \sysname ensures safety irrespective of the number of failures and degree of asynchrony. 
+  It ensures liveness provided that a majority of replicas remain alive and communication delays 
+  are short.
+}
+  
+  
+%A replica assumes one of two roles: leader (left of figure)  or follower (right of figure), with very different behaviors.
+Each replica has an idea of which replica is currently the leader. A replica that considers itself the leader 
+assumes that role (left of figure); otherwise, it assumes the role of a follower (right of figure). 
+%We sometimes use the term {\em node} to generically refer to  a replica that might be a leader or a follower. 
+Each replica grants RDMA \emph{write permission} to its log for its current leader and no other replica.
+The replicas constantly monitor their current leader to check that it is still active. 
+The replicas might not agree on who the current leader is. 
+%We say that in \emph{normal execution}, or 
+But in \emph{the common case}, all replicas have the same leader, and that leader is active.
+%In the common case, there is exactly one leader, but the protocol  tolerates the presence of multiple leaders simultaneously.
+%
+When that happens, \sysname is simple and efficient.
+The leader captures a client request, uses an RDMA Write to append that request to the log of each follower, and then continues
+  the application to process the request.
+  When the followers detect a new request in their log, they inject
+  the request into the application, thereby updating
+  the replicas.
+
+The main challenge in the design of SMR protocols is to handle
+  leader failures.
+Of particular concern is the case when a leader appears failed
+  (due to intermittent network delays)
+  so another leader takes over, but the original leader
+  is still active.
+%All SMR protocols that tolerare asynchrony must address this problem.
+
+To detect failures in \sysname, the leader periodically increments
+  a local counter:  the followers periodically check the counter
+  using an RDMA Read.
+If the followers do not detect an increment of the counter after a few tries,
+a new leader is elected.
+  
+The new leader revokes a write
+  permission by any old leaders, thereby ensuring that
+  old leaders cannot interfere with the operation of the new
+  leader~\cite{aguilera2019impact}.
+The new leader also reconstructs any partial work
+  left by prior leaders.
+  
+Both the leader and the followers are internally divided into two
+  major parts: the replication plane and the background plane.
+\CRExtra{Roughly, the replication plane plays one of two mutually exclusive roles: the \textit{leader role}, which is responsible for copying
+  requests captured by the leader to the followers, or the \textit{follower role}, which replays those requests to update the followers' replicas.}
+\CRExtra{The background plane monitors the health of the leader, determines and assigns the leader or follower role to the replication plane,
+  and handles permission changes.}
+Each plane has its own threads and queue pairs. 
+This is in order to improve
+  parallelism and provide isolation of performance and functionality.
+  More specifically, the following components exist in each of the planes.
+  
+The replication plane has three components:\mka{Rachid says: Should we use the term ``follower''?}
+      \begin{itemize}
+         \item {\em Replicator.} This component implements the main protocol to replicate a request from the leader to the followers, by writing the request in the followers' logs using RDMA Write.
+
+        \item {\em Replayer.} This component replays entries from the local log. \CRExtra{This component and the replicator component are mutually exclusive; a replica only has one of these components active, depending on its role in the system.}
+        
+        \item {\em Logging.} This component stores client requests to be replicated. Each replica has its own local log,
+             which may be written remotely by other replicas according to previously granted permissions.
+             Replicas also keep a copy of remote logs, which is used by a new leader to reconstruct partial log
+             updates by older leaders. 
+      \end{itemize}
+      
+The background plane has two components:
+      \begin{itemize}
+        \item {\em Leader election.} This component detects failures of leaders and selects other replicas to become leader. \CRExtra{This is what determines the role a replica plays.}
+        \item {\em Permission management.} This component grants and revokes write access of local data by remote replicas. It maintains a permissions array, which stores access requests by remote replicas. Basically, a remote replica uses RDMA to store a 1 in this vector to request access.
+      \end{itemize}
+
+
+We describe these planes in more detain in \S\ref{sec:algorithm} and \S\ref{sec:protocol}.
+
+\subsection{RDMA Communication}
+%\Naama{This section is common to both the background and the replication planes, so this is one possible place for it. Another option is to have it after describing everything, maybe in the implementation section.}
+
+Each \node{} has two QPs for each remote \node{}: one
+  QP for the \rplane{} and one for the \leplane{}.
+The QPs for the \rplane{} share a completion queue,
+  while the QPs for the \leplane{} share another completion queue.
+The QPs operate in Reliable Connection (RC) mode.
+
+Each \node{} also maintains two MRs, one for each plane.
+% All QPs and MRs are registered in the same Protection Domain~\cite{rdma-manual}, so that both MR can be accessed from either the \rplane{} or the \leplane{}.
+The MR of the \rplane{} contains the consensus log and the MR of the \leplane{} contains metadata for leader election (\S\ref{sec:leader}) and permission management (\S\ref{sec:permission}). During execution,  \node{s} may change the level of access to their log that they give to each remote \node{}; this is done by changing QP access flags. 
+Note that all \node{s} always have remote read and write access permissions to the memory region in the \leplane{} of each \node. 
+% This enables a \sysname server to give different access permissions to the logs' memory. Note that all \node{s} always have remote read and write access permissions to the memory region in the \leplane{} of each \node, but do not always maintain write permission on the \rplane{} memory region. 
+%\igor{Changed this. Quick check please.}
+
+% As with the logs, the heartbeat (\S\ref{sec:leader}) and permissions array (\S\ref{sec:permission})
+%  are registered as overlapping MRs.
+
+
+%Figure~\ref{fig:normalTimeline} shows the accesses done in normal execution to replicate two values.
+
+%\begin{figure}
+%	\centering
+%	\includegraphics[trim=250 250 250 250,clip,width=\columnwidth]{figures/common_case_diagram.pdf}
+%	\caption{Timeline showing RDMA accesses during normal execution of \sysname. $p_2$ is the leader, and is replicating two values to servers $p_1$ and $p_3$. Dotted arrows represent RDMA-generated completions (acknowledgements) of the remote writes executed by $p_2$.\igor{Not sure if this is really necessary. We could get rid of it, or maybe move it the the logic section.}}
+%	\label{fig:normalTimeline}
+%\end{figure}

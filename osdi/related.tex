@@ -1,0 +1,144 @@
+\section{Related Work}\label{sec:related}
+
+%\mka{To do: Cover Hermes~\cite{hermes} and HovercRaft~\cite{hovercraft}}
+
+\paragraph{SMR in General.}
+
+State machine replication is a common technique for building fault-tolerant, 
+highly available services~\cite{schneider1990implementing,paxos}.
+Many practical SMR protocols have been designed, addressing simplicity~\cite{ongaro2014search,boichat2003deconstructing,hunt2010zookeeper,burrows2006chubby,lampson1996build}, cost~\cite{lamport2006fast,kotla2007zyzzyva}, and harsher failure assumptions~\cite{kotla2007zyzzyva,castro1999practical,gafni2003disk,base}. 
+In the original scheme, which we follow, the order of all operations is agreed upon using consensus instances. 
+At a high-level, our \sysname protocol resembles 
+the classical Paxos algorithm~\cite{paxos}, but there are some important differences.  
+In particular, we leverage RDMA's ability to grant and revoke access permissions to ensure 
+that two leader replicas cannot both write a value without recognizing each other's presence. 
+This allows us to optimize out participation from the follower replicas, leading to better performance. 
+Furthermore, these dynamic permissions guide our unique leader changing mechanism.
+%for they leverage RDMA's characteristics effectively for low latency.
+% ~\cite{kotla2007zyzzyva} (although prior work has shown that this need not always be the case~\cite{ClementWADM09}).
+
+
+%While \sysname borrows many existing techniques to achieve its low latency, we believe it provides a novel combination of those ideas that, when applied to an RDMA system, achieves a level of performance that could not be attained previously. Below we describe similar techniques used in the literature.
+%\mka{Changed para, pls chk}
+
+Several implementations of Multi-Paxos avoid repeating Paxos's prepare phase for every consensus instance, as long as the same leader remains~\cite{pml2007,lamport2001paxos,mazieres2007paxos}. Piggybacking a commit message onto the next replicated request, 
+as is done in \sysname, is also used as a latency-hiding mechanism in~\cite{wang2017apus,mazieres2007paxos}.
+
+%Local heartbeats for failure detection have been used in shared memory algorithms~\cite{local,heartbeats}.\mka{What are these refs?}
+Aguilera et al.~\cite{aguilera2018passing} suggested the use of local heartbeats in a leader election algorithm designed for a theoretical message-and-memory model, 
+in an approach similar to our pull-score mechanism. However, no system has so far implemented such local heartbeats for leader election in RDMA.
+
+Single round-trip replication has been achieved in several previous works using two-sided sends and receives~\cite{keidar2001cost,lamport2006fast,dutta2005fast, hermes,kotla2007zyzzyva}. Theoretical work has shown that single-shot consensus can be achieved in a single one-sided round trip~\cite{aguilera2019impact}. However, \sysname is the first system to put that idea to work and implement one-sided single round trip SMR. 
+
+Alternative reliable replication schemes totally order only non-conflicting operations~\cite{HoltBZPOC16,ClementsKZMK13,gbcast,generalizedconsensus,crdt,curp,hermes}. 
+These schemes require opening the service being replicated to identify which operations commute. 
+In contrast, we designed \sysname assuming the replicated service is a black box. 
+If desired, several parallel instances of \sysname could be used to replicate concurrent operations that commute.
+This could be used to increase throughput in specific applications.
+
+It is also important to notice that we consider ``crash'' failures. 
+In particular, we assume nodes cannot behave in a Byzantine manner~\cite{kotla2007zyzzyva,ClementWADM09,castro1999practical}.
+
+
+\paragraph{Improving the Stack Underlying SMR.}
+%Paxos and variants (including Disk Paxos), Raft, Zyzzyva (for reducing replication overhead), Also mention achieving consensus in one round trip.
+
+While we propose a new SMR algorithm adapted to RDMA in order to optimize latency, 
+other systems keep a classical algorithm but improve the underlying communication
+  stack~\cite{erpc,socksdirect}.
+With this approach, somewhat orthogonal to ours, the best reported
+  replication latency is 5.5 $\mu s$~\cite{erpc}, almost $5\times$ slower than \sysname.
+  HovercRaft~\cite{hovercraft} shifts the SMR from the application layer to the transport layer to avoid IO and CPU bottlenecks on the leader replica. However, their request latency is more than an order of magnitude more than that of \sysname, and they do not optimize fail-over time.
+  
+%{ \bf Naama: is the approach above different than the approaches below? Isn't it also about the protocol stack; I have gathered them in the same paragraph but if they follow the same approach, we should say it clearly.}
+Some SMR systems leverage
+  recent technologies such as programmable switches and
+  NICs~\cite{li2016just,jin2018netchain,istvan2016consensus,ipipe}.
+ % \red{Naama to add refs and check if we correctly address NOPaxos, NetChains, and Caribou here}
+% to replicate more efficiently, 
+% This approach is orthogonal to ours.
+However, programmable networks are not as widely
+  available
+  as RDMA, which has been commoditized with technologies such as RoCE and iWARP.
+
+
+
+%While these schemes require opening the service being replicated in order to identify which operations commute, they also usually improve performance. In our case, when a client needs to invoke the service through TCP, such as with \redis{} and \memcached{}, the gain will be small given the low cost of consensus in comparison. This might be beneficial in systems where all communication goes through RDMA (\eg, HERD~\cite{kalia2014using}) and we plan to experiment with such possibility in the future. 
+
+
+%Some work in the theory community has determined the number of communication delays needed under certain network assumptions to achieve consensus and SMR.  It has been shown that, in a message passing system, consensus can be achieved in one round trip~\cite{keidar2001cost,lamport2006fast,dutta2005fast}. 
+% Recently, it was shown that, in theory, a single round trip suffices for consensus using one-sided RDMA~\cite{aguilera2019impact}.
+
+
+% \paragraph{Other.}
+% Some ideas to discuss:
+% \begin{itemize}
+%     \item One-sided vs two-sided
+%     \item local timestamps are a well-known leader election technique in shared memory, but we are the first to use it in RDMA-based SMR.
+%     \item Where do the various techniques we use come from \& the fact that we are the first to combine them in this way
+%     \item leader election?
+% \end{itemize}
+% \mka{Don't we cover most of these already?}
+
+
+\paragraph{Other RDMA Applications.}
+%HERD, FaRM, guidelines, eRPC (not really RDMA but might be good to mention it and justify why we still think RDMA is worth using)
+More generally, RDMA has recently been the focus of many data center system designs, including key-value stores~\cite{kalia2014using,dragojevic2014farm} and transactions~\cite{wei2015fast,kalia2016fasst}. 
+Kalia et al. provide guidelines on the best ways to use RDMA to enhance performance~\cite{kalia2016design}. 
+Many of their suggested optimizations are employed by \sysname.
+% and we report on the latency improvement we observed from such optimizations. 
+Kalia et al. also advocate the use of two-sided RDMA verbs (Sends/Receives) instead of RDMA Reads in situations in which a single RDMA Read might not suffice. 
+However, this does not apply to \sysname, since we know a priori which memory location should be read, and we rarely have to follow up with another read. 
+
+
+\paragraph{Failure detection.}
+Failure detection is typically done using timeouts.
+Conventional wisdom is that timeouts must be large,
+  in the seconds~\cite{falcon},
+  though some systems report timeouts as low
+  as 10 milliseconds~\cite{hovercraft}.
+It is possible to improve detection time
+  using inside information~\cite{falcon,pigeon} or
+  fine-grained reporting~\cite{albatross},
+  which requires changes to apps and/or the infrastructure.
+This is orthogonal to our score-based mechanism
+  and could be used to further improve \sysname.
+
+\subsection*{Similar RDMA-based Algorithms}
+A few SMR systems have recently been designed for RDMA~\cite{poke2015dare,wang2017apus,derecho}, but used RDMA differently from \sysname.
+
+\bigskip
+\noindent \textbf{DARE}~\cite{poke2015dare} is the first RDMA-based SMR system. Similarly to \sysname, 
+DARE uses only one-sided RDMA verbs executed by the leader to replicate the log in normal execution, \CR{and makes use of permissions when changing leaders.} 
+\CR{However, unlike Mu, DARE requires updating the tail pointer of each replica's log in a separate RDMA Write from the one that copies over the new value, which leads to more round-trips for replication.}
+DARE's use of permissions does not
+  lead to a light-weight mechanism to
+  block concurrent leaders, as in \sysname. DARE has a heavier leader election protocol than \sysname's, similar to that of RAFT, in which care is taken to ensure that at most one process considers itself 
+leader at any point in time.
+
+\bigskip
+\noindent \textbf{APUS}~\cite{wang2017apus} improves upon DARE's throughput. 
+However, APUS requires active participation from the follower \node{s} during the replication protocol, resulting in higher latencies. \CR{Thus, it does not achieve the one-sided common-case communication of \sysname. Similarly to DARE and \sysname, APUS uses transitions through queue pair states to allow or deny RDMA access. However, like DARE, it does not use this mechanism to achieve a single one-sided communication round.}
+
+\bigskip
+\noindent \textbf{Derecho}~\cite{derecho} provides durable and non-durable SMR, by combining a
+  data movement protocol (SMC or RDMC) with a shared-state
+  table primitive (SST) for determining when it is safe to deliver messages.
+This design yields high throughput but also high latency: a minimum of
+  10$\mu s$ for non-durable SMR~\cite[Figure 12(b)]{derecho} and more for durable SMR.
+This latency results from a node delaying the delivery of a message
+  until all nodes have confirmed its receipt using the SST, which
+  takes additional RDMA communication steps compared to \sysname.
+  It would be interesting to explore how \sysname's protocol could
+  improve Derecho.
+  
+\bigskip
+\noindent \textbf{Aguilera et al}~\cite{aguilera2019impact} \CR{present a one-shot consensus algorithm based on RDMA that solves consensus in a single one-sided communication round in the common case. They model RDMA's one-sided verbs as shared memory primitives which operate only if granted appropriate permissions. Their one-round communication complexity relies on changing permissions, an idea we use in \sysname.
+ While that work focuses on a theoretical construction, \sysname is a fully fledged SMR system that needs
+ many other mechanisms, such as
+ logging, managing state, coordinating instances, recycling instances, handling clients, and permission management. Because these mechanisms are non-trivial, \sysname requires its own proof of correctness\ifcamera~\cite{fullversion}\else~(see~\hyperref[sec:appendix]{Appendix})\fi. 
+ \sysname also provides an implementation and experimental evaluation not found in~\cite{aguilera2019impact}.}
+
+
+
+

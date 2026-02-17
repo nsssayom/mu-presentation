@@ -1,0 +1,124 @@
+\subsection{Optimizations \& Additions}\label{sec:optimizations}
+\subsubsection{New Leader Catch-Up}
+In the basic version of the algorithm described so far, it is possible for a new leader to miss decided entries from its log (e.g., if the new leader was not part of the previous leader's confirmed followers). The new leader can only catch up by attempting to propose new values at its current FUO, discovering previously accepted values, and re-committing them. This is correct but inefficient.
+
+We describe an extension that allows a new leader $\ell$ to catch up faster: after constructing its confirmed followers set (lines~\ref{line:app-permission-start}--\ref{line:app-permission-end}), $\ell$ can read the FUO of each of its confirmed followers, determine the follower $f$ with the highest FUO, and bring its own log and FUO up to date with $f$. This is described in the pseudocode below:
+
+\begin{lstlisting}[label={alg:app-catchup}, caption={Optimization: Leader Catch Up}]
+    For every process p in confirmedFollowers
+        Read p's FUO
+        Abort if any read fails
+    F = follower with max FUO
+    if F.FUO > my_FUO:
+        Copy F.LOG[my_FUO: F.FUO] into my log
+        myFUO = F.FUO
+        Abort if any read fails
+\end{lstlisting}
+
+We defer our correctness argument for this extension to Section~\ref{sec:update-followers}.
+
+% We show that Invariant~\ref{inv:commit} holds even if this approach is used. We note that the rest of the proof of correctness doesn't rely on committed values, and therefore cannot break due to this optimization.
+
+% \begin{proof}[Proof of Invariant~\ref{inv:commit} with Algorithm~\ref{alg:catchup}.]
+% Consider a process $p$ whose log satisfied Invariant~\ref{inv:commit}, and which now executes the catching up algorithm to update its log. We want to show that after catching up, $p$'s log still satisfies Invariant~\ref{inv:commit}. Assume by contradiction that $p$'s log doesn't satisfy the invariant after it executes Algorithm~\ref{alg:catchup}. Without loss of generality, assume that $p$ is the first process in the execution whose log stops satisfying Invariant~\ref{inv:commit}. Then all processes in $p$'s confirmed followers set do satisfy the invariant. That is, all values committed at the followers logs are also decided in those indices. Let $q$ be the follower from whose log $p$ copies entries when executing Algorithm~\ref{alg:catchup}. Note that $p$ copies only values that are committed at $q$. Since $q$'s log satisfies Invariant~\ref{inv:commit}, $p$ only copies over entries that are decided in their corresponding slot. Therefore, $p$ still satisfies the invariant after executing the algorithm. Contradiction.
+% \end{proof}
+
+\subsubsection{Update Followers}\label{sec:update-followers}
+
+While the previous extension allows a new leader to catch up in case it does not have the latest committed values, followers' logs may still be left behind (e.g., for those followers that were not part of the leader's confirmed followers).
+
+As is standard for practical Paxos implementations, we describe a mechanism for followers' logs to be updated so that they contain all committed entries that the leader is aware of. After a new leader $\ell$ updates its own log as described in Algorithm~\ref{alg:app-catchup}, it also updates its confirmed followers' logs and FUOs:
+
+\begin{lstlisting}[label={alg:app-updateFollowers}, caption={Optimization: Update Followers}]
+    For every process p in confirmed followers:
+        Copy myLog[p.FUO: my_FUO] into p.LOG
+        p.FUO = my_FUO
+        Abort if any write fails
+\end{lstlisting}
+
+We now argue the correctness of the update mechanisms in this and the preceding subsections. These approaches clearly do not violate termination. We now show that they preserve agreement and validity.
+
+\begin{proof}[Validity.]
+We extend the proof of Invariant~\ref{inv:pre-validity} to also cover Algorithms~\ref{alg:app-catchup} and \ref{alg:app-updateFollowers}; the proof of Theorem~\ref{inv:validity} remains unchanged. 
+
+Assume by contradiction that some log slot $L$ does not satisfy Invariant~\ref{inv:pre-validity}. Without loss of generality, assume that $L$ is the first log slot in the execution which stops satisfying Invariant~\ref{inv:pre-validity}. In order for $L$ to contain $v$, either (i) some process $q$ wrote $v$ into $L$ at line~\ref{line:app-writeAccept}, or (ii) $v$ was copied into $L$ using Algorithm~\ref{alg:app-catchup} or \ref{alg:app-updateFollowers}. In case (i), either $v$ was $q$'s input value (a contradiction), or $q$ adopted $v$ at line~\ref{line:app-freshestValue} after reading it from some log slot $L'\ne L$. In this case, $L'$ must have contained $v$ before $L$ did, a contradiction of our choice of $L$. In case (ii), some log slot $L''$ must have contained $v$ before $L$ did, again a contradiction.
+\end{proof}
+
+\begin{proof}[Agreement.]
+We extend the proof of~\ref{inv:agreement} to also cover Algorithms~\ref{alg:app-catchup} and \ref{alg:app-updateFollowers}. Let $t$ be the earliest time when agreement is broken; i.e., $t$ is the earliest time such that, by time $t$, some process $p_1$ has committed $v_1$ at $i$ and some process $p_2$ has committed $v_2 \ne v_1$ at $i$. We can assume without loss of generality that $p_1$ commits $v_1$ at $t_1 = t$ and $p_2$ commits $v_2$ at $t_2 < t_1$. We now consider three cases:
+
+\begin{enumerate}
+    \item Both $p_1$ and $p_2$ commit normally by incrementing their FUO at line~\ref{line:app-incrementFUO}. Then the proof of~\ref{inv:agreement} applies to $p_1$ and $p_2$.
+    \item $p_1$ commits normally by incrementing its FUO at line~\ref{line:app-incrementFUO}, while $p_2$ commits with Algorithm~\ref{alg:app-catchup} or \ref{alg:app-updateFollowers}. Then some process $p_3$ must have committed $v_2$ normally at line~\ref{line:app-incrementFUO} and the proof of ~\ref{inv:agreement} applies to $p_1$ and $p_3$.
+    \item $p_1$ commits $v_1$ using Algorithm~\ref{alg:app-catchup} or \ref{alg:app-updateFollowers}. Then $v_1$ was copied to $p_1$'s log from some other process $p_3$'s log, where $v_1$ had already been committed. But then, agreement must have been broken earlier than $t$ ($v_1$ committed at $p_3$, $v_2$ committed at $p_2$), a contradiction.
+\end{enumerate}
+\end{proof}
+
+% It is easy to see that this also does not break Invariant~\ref{inv:commit}; we know that before the first time this optimization is executed, all logs satisfy Invariant~\ref{inv:commit}. Furthermore, if the log of the leader who executes Algorithm~\ref{alg:updateFollowers} satisfies Invariant~\ref{inv:commit}, then it cannot cause a log of some follower to break the invariant, since it only copies over entries that were committed in its own log, and therefore were decided in that index. A simple induction yields the result.
+
+\subsubsection{Followers Update Their Own FUO}
+In the algorithm and optimizations presented so far, the only way for the FUO of a process $p$ to be updated is by the leader; either by $p$ being the leader and updating its own FUO, or by $p$ being the follower of some leader that executes Algorithm~\ref{alg:app-updateFollowers}. However, in the steady state, when the leader doesn't change, it would be ideal for a follower to be able to update its own FUO. This is especially important in practice for SMR, where each follower should be applying committed entries to its local state machine. Thus, knowing which entries are committed as soon as possible is crucial. For this purpose, we introduce another simple optimization, whereby a follower updates its own FUO to $i$ if it has a non-empty entry in some slot $j \geq i$ and all slots $k < i$ are populated.
+
+\begin{lstlisting}[label={alg:FUO}, caption={Optimization: Followers Update Their Own FUO}]
+    if LOG[i] @$\neq \bot$@ && my_FUO == i-1
+        my_FUO = i
+\end{lstlisting}
+
+Note that this optimization doesn't write any new values on any slot in the log, and therefore, cannot break Validity. Furthermore, since it does not introduce any waiting, it cannot break termination.
+We now prove that this doesn't break Agreement.
+
+\begin{proof}[Agreement.]
+Assume by contradiction that executing Algorithm~\ref{alg:FUO} can break agreement. Let $p$ be the first process whose execution of Algorithm~\ref{alg:FUO} breaks agreement, and let $t$ be the time at which it changes its FUO to $i$, thereby breaking agreement.
+%\Naama{Does agreement have to break at the moment the FUO of the follower is changed, or could it be broken afterwards by some other process not executing this optimization?}
+
+It must be the case that $p$ has all slots up to and including $i$ populated in its log. Furthermore, since $t$ is the first time at which disagreement happens, and $p$'s FUO was at $i-1$ before $t$, it must be the case that for all values in slots $1$ to $i-2$ of $p$'s log, if any other process $p'$ also has those slots committed, then it has the same values as $p$ in those slots. 
+%\Naama{Rephrase to make the previous sentence make more sense.}
+Let $p$'s value at slot $i-1$ be $v$. Let $\ell_1$ be the leader that populated slot $i-1$ for $p$, and let $\ell_2$ be the leader the populated slot $i$ for $p$. If $\ell_1 = \ell_2$, then $p$'s entry at $i-1$ must be committed at $\ell_1$ before time $t$, since otherwise $\ell_1$ would not have started replicating entry $i$. So, if at time $t$, some process $q$ has a committed value $v'$ in slot $i-1$ where $v' \neq v$, then this would have violated agreement with $\ell_1$ before $t$, contradicting the assumption that $t$ is the earliest time at which agreement is broken.
+
+Now consider the case where $\ell_1 \neq \ell_2$. Note that for $\ell_2$ to replicate an entry at index $i$, it must have a value $v'$ committed at entry $i-1$. Consider the last leader, $\ell_3$, who wrote a value on $\ell_2$'s $i-1$th entry. If $\ell_3 = \ell_1$, then $v' = v$, since a single leader only ever writes one value on each index. Thus, if agreement is broken by $p$ at time $t$, then it must have also been broken at an earlier time by $\ell_2$, which had $v$ committed at $i-1$ before time $t$. Contradiction.
+
+If $\ell_3 = \ell_2$,
+we consider two cases, depending on whether or not $p$ is part of $\ell_2$'s confirmed followers set. 
+If $p$ is not in the confirmed followers of $\ell_2$, then $\ell_2$ could not have written a value on $p$'s $i$th log slot. Therefore, $p$ must have been a confirmed follower of $\ell_2$. If $p$ was part of $\ell_2$'s quorum for committing entry $i-1$, then $\ell_2$ was the last leader to write $p$'s $i-1$th slot, contradicting the assumption that $\ell_1$ wrote it last. Otherwise, if $\ell_2$ did not use $p$ as part of its quorum for committing, it still must have created a work request to write on $p$'s $i-1$th entry before creating the work request to write on $p$'s $i$th entry. By the FIFOness of RDMA queue pairs, $p$'s $i-1$th slot must therefore have been written by $\ell_2$ before the $i$th slot was written by $\ell_2$, leading again to a contradiction.
+
+Finally, consider the case where $\ell_3 \neq \ell_1$ and $\ell_3 \neq \ell_2$. Recall from the previous case that $p$ must be in $\ell_2$'s confirmed followers set. Then when $\ell_2$ takes over as leader, it executes the update followers optimization presented in Algorithm~\ref{alg:app-updateFollowers}. By executing this, it must update $p$ with its own committed value at $i-1$, and update $p$'s FUO to $i$. However, this contradicts the assumption that $p$'s FUO was changed from $i-1$ to $i$ by $p$ itself using Algorithm~\ref{alg:FUO}.
+\end{proof}
+%\Naama{Should read over the proof and see that no cases are missing. This was longer than I expected...}
+
+\subsubsection{Grow Confirmed Followers}
+
+In our algorithm, the leader only writes to and reads from its confirmed followers set. So far, for a given leader $\ell$, this set is fixed and does not change after $\ell$ initially constructs it in lines~\ref{line:app-permission-start}--\ref{line:app-permission-end}. This implies that processes outside of $\ell$'s confirmed followers set will remain behind and miss updates, even if they are alive and timely.
+
+We present an extension which allows such processes to join $\ell$'s confirmed followers set even if they are not part of the initial majority. Every time Propose is invoked, $\ell$ will check to see if it received permission acks since the last Propose call and if so, will add the corresponding processes to its confirmed followers set. This extension is compatible with those presented in the previous subsections: every time $\ell$'s confirmed followers set grows, $\ell$ re-updates its own log from the new followers that joined (in case any of their logs is ahead of $\ell$'s), as well as updates the new followers' logs (in case any of their logs is behind $\ell$'s).
+
+One complication raised by this extension is that, if the number of confirmed followers is larger than a majority, then $\ell$ can no longer wait for its reads and writes to complete at all of its confirmed followers before continuing execution, since that would interfere with termination in an asynchronous system.
+
+The solution is for the leader to issue reads and writes to all of its confirmed followers, but only wait for completion at a majority of them. One crucial observation about this solution is that confirmed followers cannot miss operations or have operations applied out-of-order, even if they are not consistently part of the majority that the leader waits for before continuing. This is due to RDMA's FIFO semantics.
+
+The correctness of this extension derives from the correctness of the algorithm in general; whenever a leader $\ell$ adds some set $S$ to its confirmed followers $C$, forming $C' = C \cup S$, the behavior is the same as if $\ell$ just became leader and its initial confirmed followers set was $C'$.
+%\Naama{Seems like we would need to execute Phase 1 for the new followers to make sure they don't have values in the slots we want to commit. Not sure we need to though. However, if we do, then I don't think a proof is necessary here...}
+
+\subsubsection{Omit Prepare Phase}
+
+%\igor{TODO}
+As is standard practice for Paxos-derived implementations, the prepare phase can be omitted if there is no contention. More specifically, the leader executes the prepare phase until it finds no accepted values during its prepare phase (i.e., until the check at line~\ref{line:app-checkEmpty} succeeds). Afterwards, the leader omits the prepare phase until it either (a) aborts, or (b) grows its confirmed followers set; after (a) or (b), the leader executes the prepare phase until the check at line~\ref{line:app-checkEmpty} succeeds again, and so on.
+
+This optimization concerns performance on the common path. With this optimization, the cost of a Propose call becomes a single RDMA write to a majority in the common case when there is a single leader.
+
+The correctness of this optimization follows from the following lemma, which states that no `holes' can form in the log of any replica. That is, if there is a value written in slot $i$ of process $p$'s log, then every slot $j<i$ in $p$'s log has a value written in it.
+
+\begin{lemma}[No holes] \label{lem:noholes}
+For any process $p$, if $p$'s log contains a value at index $i$, then $p$'s log contains a value at every index $j$, $0 \le j \le i$.
+\end{lemma}
+
+\begin{proof}
+Assume by contradiction that the lemma does not hold. Let $p$ be a process whose slot $j$ is empty, but slot $j+1$ has a value, for some $j$. Let $\ell$ be the leader that wrote the value on slot $j+1$ of $p$'s log, and let $t$ be the last time at which $\ell$ gained write permission to $p$'s log before writing the value in slot $j+1$. Note that after time $t$ and as long as $\ell$ is still leader, $p$ is in $\ell$'s confirmed followers set. By Algorithm~\ref{alg:app-updateFollowers}, $\ell$ must have copied a value into all slots of $p$ that were after $p$'s FUO and before $\ell$'s FUO. By the way FUO is updated, $p$'s FUO cannot be past slot $j$ at this time. Therefore, if $\ell$'s FUO is past $j$, slot $j$ would have been populated by $\ell$ at this point in time. Otherwise, $\ell$ starts replicating values to all its confirmed followers, starting at its FUO, which we know is less than or equal to $j$. By the FIFO order of RDMA queue pairs, $p$ cannot have missed updates written by $\ell$. Therefore, since $p$'s $j+1$th slot gets updated by $\ell$, so must its $j$th slot. Contradiction.
+\end{proof}
+
+\begin{corollary}
+Once a leader reads no accepted values from a majority of the followers at slot $i$, it may safely skip the prepare phase for slots $j>i$ as long as its confirmed followers set does not decrease to less than a majority.
+\end{corollary}
+
+\begin{proof}
+Let $\ell$ be a leader and $C$ be its confirmed follower set which is a quorum. Assume that $\ell$ executes line~\ref{line:app-adoptOwn} for slot $i$; that is, no follower $p\in C$ had any value in slot $i$. Then, by Lemma~\ref{lem:noholes}, no follower in $C$ has any value for any slot $j>i$. Since this constitutes a majority of the processes, no value is decided in any slot $j>i$, and by Invariant~\ref{inv:commit}, no value is committed at any process at any slot $j>i$. Furthermore, as long as $\ell$ has the write permission at a majority of the processes, $\ell$ is the only one that can commit new entries in these slots (by Invariant~\ref{inv:solo-detection}). Thus, $\ell$ cannot break agreement by skipping the prepare phase on the processes in its confirm followers set.
+\end{proof}

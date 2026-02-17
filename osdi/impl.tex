@@ -1,0 +1,26 @@
+\section{Implementation}\label{sec:impl} \label{sec:opt}
+
+\sysname is implemented in 7157 lines of C++17 code (CLOC~\cite{tool-cloc}).
+It uses the \emph{ibverbs} library for RDMA over Infiniband.
+We implement all features and extensions in sections~\ref{sec:algorithm} and \ref{sec:protocol}, except adding/removing
+  replicas and fate sharing.
+%This feature is not triggered in the common path, and is not needed for failure handling, so it does not affect our evaluation. \Naama{I'm worried this detracts from our paper. Maybe we should just not mention it?}
+%
+Moreover, we implement some standard RDMA optimizations to reduce latency. 
+RDMA Writes and Sends with payloads below a device-specific limit (256 bytes in our setup) are inlined: their payload is written directly to their work request.
+We pin threads to cores in the NUMA node of the NIC. 
+
+\CRExtra{Our implementation is modular. We create several modules on top of the \textit{ibverbs} library, which we expose as Conan~\cite{conan} packages. Our modules deal with common practical problems in RDMA-based distributed computing (e.g., writing to all and waiting for a majority, gracefully handling broken RDMA connections etc.). Each abstraction is independently reusable. Our implementation also provides a QP exchange layer, making it straightforward to create, manage, and communicate QP information.}
+
+
+%We describe these below and evaluate the effectiveness of each optimization in Section~\ref{sec:eval}. \igor{Decrease the emphasis given to these. Still mention them, but not in separate paragraphs and make sure to say that they are standard practice.}
+
+
+%\paragraph{Thread Placement and Memory Allocation.}
+%In this category we include \textit{core pinning}, \textit{co-placement} and \textit{hugepages}. Core pinning means that we place each thread (both replication plane and background plane threads) on a separate core, so as to avoid the threads preempting each other or incurring delays due to migration. Co-placement means that we ensure all threads execute in the NUMA domain in which the NIC resides (we also ensure all memory is allocated in this NUMA domain); this is achieved using \texttt{numactl}. The NIC caches virtual to physical address translations for RDMA-registered memory; enabling hugepages lowers the number of such translations in the cache, thus increasing their cache hit rate. 
+
+
+
+
+%\vjm{Would be nice to have the microbenchmark graph show the incremental effects of cumulative optimizations on performance of the base Peregrine system (in the evaluation).}
+

@@ -1,0 +1,202 @@
+\section{Replication Plane} \label{sec:algorithm}
+
+The replication plane takes care of execution in the common case, but remains safe during leader changes. This is where we take care to optimize the latency of the common path. We do so by ensuring that, in the replication plane, only a leader replica communicates over the network, whereas all follower replicas are \emph{silent} (i.e., only do local work).
+
+In this section, we discuss algorithmic details related to replication in \sysname{}. 
+For pedagogical reasons, we first describe 
+in \S\ref{sec:basic-algorithm}
+a basic version of the algorithm, \CRExtra{which requires several round-trips to decide.
+Later, in \S\ref{sec:extensions}, we discuss how \sysname achieves its single round-trip complexity in the common case, as we present key extensions and optimizations to improve functionality and performance.}
+\ifcamera
+We give an intuition of why the algorithm works in this section, and we provide the complete correctness argument in the full version of the paper~\cite{fullversion}.
+\else
+We give an intuition of why the algorithm works in this section, and we provide the complete correctness argument in the~\hyperref[sec:appendix]{Appendix}.
+\fi
+
+\subsection{Basic Algorithm}\label{sec:basic-algorithm}
+The leader captures client requests, and calls \emph{propose} to replicate these requests. 
+It is simplest to understand our replication algorithm relative to the Paxos
+algorithm, which we briefly summarize; for details, we refer the reader to~\cite{paxos}.
+%At a high level, our replication algorithm itself is similar to Paxos.
+%
+In Paxos, for each slot of the log, a leader first executes a \emph{prepare phase} where it sends a proposal number to all replicas.\footnote{Paxos uses proposer and acceptor terms; instead, we use leader and replica.}
+A replica replies with either nack if it has seen a higher proposal number, or otherwise with the value with the highest proposal number that it has accepted.
+After getting a majority of replies, the leader adopts the value with the highest proposal number. 
+If it got no values (only acks), it adopts its own proposal value. In the next phase, the \emph{accept phase}, the leader sends its proposal number and adopted value to all replicas. 
+A replica acks if it has not received any prepare phase message with a higher proposal number.
+
+% In Paxos, for each slot of the log, a proposer (in our case, leader replica)
+% first executes a \emph{prepare phase} where it chooses a \emph{proposal number} propNum and sends it to all acceptors (in our case, follower replicas). An acceptor replies with the value having the highest proposal number that it has accepted, or with nack if the acceptor has seen a higher proposal than
+% %propNum is not the highest proposal number this acceptor has ever received.
+% propNum.
+% The proposer waits for a majority replies, and then adopts the value with the highest proposal number. If it received no values (only acks), then it adopts its own proposal value. In the next phase, the \emph{accept phase}, the proposer sends the message (propNum, val) to all the acceptors, where val is the value it adopted. An acceptor acks this message if it has not received any prepare phase message with a proposal number higher than propNum.
+
+In Paxos, replicas actively reply to messages from the leader, but
+  in our algorithm, replicas are silent and communicate
+  information passively by publishing it to their memory.
+Specifically, along with their log, a replica publishes
+  a \emph{minProposal} representing the minimum proposal number which it
+  can accept. 
+The correctness of our algorithm hinges on the leader reading and updating the minProposal number of each follower before updating anything in its log, and on updates on a replica's log happening in slot-order. 
+
+%\Naama{Added a few sentences below to highlight differences from Paxos. Thoughts?} 
+However, this by itself is not enough; Paxos relies on active participation from the followers not only for the data itself, but also to avoid races. Simply publishing the relevant data on each replica is not enough, since two competing leaders could miss each other's updates. This can be avoided if each of the leaders rereads the value after writing it~\cite{gafni2003disk}. However, this requires more communication. To avoid this, we shift the focus from the communication itself to the \emph{prevention} of bad communication. 
+A leader $\ell$ maintains a set of \emph{confirmed followers}, which have granted write permission to $\ell$ and revoked write permission from other leaders before $\ell$ begins its operation. This is what prevents races among leaders in \sysname.
+%
+%For this, it is crucial that a leader $\ell$ maintains a set of \emph{confirmed followers}, which have granted write permission to $\ell$ and revoked write permission from other leaders before $\ell$ begins its operation.
+We describe these mechanisms in more detail below.
+
+
+
+
+
+
+%Like many consensus protocols, the algorithm we present ensures safety at all times, but needs to be paired with a leader election algorithm for liveness. A replica invokes propose \textit{iff} it believes itself to be the leader. \Naama{Did we mention what `propose' is yet? We should explain that first, possibly in the overview section (but I don't think it's currently there). Also, minor note: I prefer the full `if and only if' over `iff'.} Non-leader replicas only do local work and do not communicate over the network (apart from answering to permission requests \Naama{and checking the leader heartbeat})---this is what we call \textit{silent followers}.
+
+\subsubsection*{Log Structure}
+The main data structure used by the algorithm is the consensus log kept at each replica (Listing~\ref{alg:log}). 
+%As in many Paxos implementations, 
+The log consists of (1) a \textit{minProposal} number, representing the smallest proposal number with which a leader may enter the accept phase on this replica; (2) a \textit{first undecided offset (FUO)}, representing the lowest log index which this replica believes to be undecided; and (3) a sequence of slots---each slot is a $(propNr, value)$ tuple. 
+\begin{lstlisting}[label=alg:log, caption=Log Structure,keywords={}]
+struct Log {
+  minProposal = 0,
+  FUO = 0,
+  slots[] = (0,@$\bot$@) for all slots 
+}
+\end{lstlisting}
+ 
+\subsubsection*{Algorithm Description}
+Each leader begins its propose call by constructing its \textit{confirmed followers} set (Listing~\ref{alg:replication}, lines~\ref{line:permission-start}--\ref{line:permission-end}). This step is only necessary the first time a new leader invokes propose or immediately after an abort. This step is done by sending permission requests to all replicas and waiting for a majority of acks. When a replica acks, it means that this replica has granted write permission to this leader and revoked it from other replicas. The leader then adds this replica to its confirmed followers set. During execution, if the leader $\ell$ fails to write to one of its confirmed followers, because that follower crashed or gave write access to another leader, $\ell$ aborts and, if it still thinks it is the leader, it calls propose again.
+%, at which point it re-establishes its confirmed followers set.
+
+\begin{lstlisting}[label=alg:replication, caption=Basic Replication Algorithm of \sysname,keywords={},firstnumber=last,float]
+Propose(myValue):
+  done = false
+  If I just became leader or I just aborted:
+    For every process p in parallel:@\label{line:permission-start}@
+      Request permission from p
+      If p acks: add p to confirmedFollowers
+    Until this has been done for a majority@\label{line:permission-end}@
+  While not done:@\label{line:checkDone}@
+    Execute Prepare Phase
+    Execute Accept Phase
+  
+Prepare Phase:
+  For every process p in confirmedFollowers:
+    Read minProposal from p's log @\label{line:readMinProp}@
+  Pick a new proposal number, propNum, higher than any minProposal seen so far @\label{line:pickProp}@
+  For every process p in confirmedFollowers:
+    Write propNum into LOG[p].minProposal @\label{line:writePrepare}@
+    Read LOG[p].slots[myFUO] @\label{line:readVals}@
+    Abort if any write fails @\label{line:abort-phase1}@
+  If all entries read were empty: @\label{line:checkEmpty}@
+    value = myValue @\label{line:adoptOwn}@
+  Else:
+    value = entry value with the largest proposal number of slots read @\label{line:freshestValue}@
+  
+Accept Phase:
+  For every process p in confirmedFollowers:
+    Write propNum,value to p in slot myFUO @\label{line:writeAccept}@
+    Abort if any write fails @\label{line:abort-phase2}@
+  If value == myValue: @\label{line:checkMyValue}@
+    done = true @\label{line:setDone}@
+  Locally increment myFUO @\label{line:incrementFUO}@
+\end{lstlisting}
+After establishing its confirmed followers set, the leader invokes the prepare phase. 
+%As in Paxos, the purpose of the prepare phase is to block out older proposals and to discover and adopt already chosen values, if any. 
+To do so, the leader reads the \textit{minProposal} from its confirmed followers (line~\ref{line:readMinProp}) and chooses a proposal number \textit{propNum} which is larger than any that it has read or used before. %\Naama{Slightly changed this from what we said before. Still correct?}
+%
+%To do so, the leader chooses a proposal number larger than any proposal number it is aware of (line~\ref{line:pickProp}). Then, the leader reads the \textit{minProposal} from its confirmed followers (line~\ref{line:readMinProp}) and aborts if it encounters any \textit{minProposal} larger than its current proposal number. 
+%
+Then, the leader writes its proposal number into \textit{minProposal} for each of its confirmed followers. Recall that if this write fails at any follower, the leader aborts.
+It is safe to overwrite a follower $f$'s \textit{minProposal} in line~\ref{line:writePrepare} because, if that write succeeds, then $\ell$ has not lost its write permission since adding $f$ to its confirmed followers set, meaning no other leader wrote to $f$ since then. 
+To complete its prepare phase, the leader reads the relevant log slot of all of its confirmed followers and, as in Paxos, adopts either (a) the value with the highest proposal number, if it read any non-$\bot$ values, or (b) its own initial value, otherwise.
+
+%%Previous text%%
+%Then, the leader writes its proposal number into \textit{minProposal}
+%and reads the currently accepted values at the current index. This read-write-read pattern in lines~\ref{line:readMinProp}, \ref{line:writePrepare}, \ref{line:readVals} has the same effect as phase 1a and 1b messages in Paxos; in particular, it is safe to overwrite a follower $f$'s \textit{minProposal} in line~\ref{line:writePrepare} because, if that write succeeds, then no other leader wrote to $f$ since the current leader added $f$ to its confirmed followers, before reading $f$'s $minProposal$. The leader ends its prepare phase by \textit{adopting} either (a) the accepted value with the highest proposal number, if it read any accepted values, or (b) its own initial value, otherwise.
+
+The leader $\ell$ then enters the accept phase, in which it tries to commit its previously adopted value. To do so, $\ell$ writes its adopted value to its confirmed followers. If these writes succeed, then $\ell$ has succeeded in replicating its value. No new value or minProposal number could have been written on any of the confirmed followers in this case, because that would have involved a loss of write permission for $\ell$. Since the confirmed followers set constitutes a majority of the replicas, this means that $\ell$'s replicated value now appears in the same slot at a majority.
+
+Finally, $\ell$ increments its own FUO to denote successfully replicating a value in this new slot. If the replicated value was $\ell$'s own proposed value, then it returns from the \textit{propose} call; otherwise it continues with the prepare phase for the new FUO. 
+
+%%Previous text%%
+%The leader $\ell$ then enters the accept phase, in which it tries to commit its previously adopted value. To do so, $\ell$ writes its adopted value to its confirmed followers. 
+%This is similar to phase 2 of Disk Paxos~\cite{gafni2003disk}, except that $\ell$ does not need to read the written value back, because if this write succeeds, then $\ell$ knows that (i) the value was written (accepted in Paxos terms) at a majority and (ii) no competing leader wrote any value or proposal number to $\ell$'s confirmed followers since $\ell$ established its confirmed follower set (before it began the prepare phase). Thus, $\ell$ knows that the value is decided and can be marked as committed by incrementing its FUO past the written value. If the replicated value was $\ell$'s own proposed value, then it returns from the \textit{propose} call; otherwise it continues with the prepare phase for the new FUO. 
+
+% Intuitively, the algorithm's correctness follows from that of Paxos and from the additional invariants: (i) only one replica may have write access at a majority and (ii) if a leader $\ell$ successfully writes to its confirmed followers, then no other replica has written on any of $\ell$'s confirmed followers since $\ell$ established its confirmed followers set. We provide a full correctness argument in Appendix~\ref{todo}.
+
+
+
+
+\subsection{Extensions}\label{sec:extensions}
+The basic algorithm described so far is clear and concise, but it also has downsides related to functionality and performance.
+% \begin{itemize}
+%     \item New leader catch-up is slow.
+%     \item Followers can have holes in their logs.
+%     \item Followers cannot know if an entry is committed until they become leader and try to commit something.
+%     \item Due to asynchrony, the leader cannot wait for more than a majority of responses when establishing its confirmed followers set. Live replicas who do not make it into the confirmed followers set will miss updates from the leader and fall arbitrarily behind the leader.
+%     \item Performs both phases every time (4 RTTs).
+%     \item Only one replication can happen at a time.
+% \end{itemize}
+We now address these downsides with some extensions, all of which are standard for Paxos-like algorithms; 
+\ifcamera 
+their correctness is discussed in the full version of our paper~\cite{fullversion}.
+\else
+their correctness is discussed in the~\hyperref[sec:appendix]{Appendix}.
+\fi
+
+\paragraph{Bringing stragglers up to date.} In the basic algorithm, if a replica $r$ is not included in some leader's confirmed followers set, then its log will lag behind. If $r$ later becomes leader, it can catch up by proposing new values at its current FUO, discovering previously accepted values, and re-committing them. This is correct but inefficient. Even worse, if $r$ never becomes leader, then it will never recover the missing values. We address this problem by introducing an update phase for new leaders. After a replica becomes leader and establishes its confirmed followers set, but before attempting to replicate new values, the new leader (1) brings itself up to date with its highest-FUO confirmed follower (Listing~\ref{alg:catchup}) and (2) brings its followers up to date (Listing~\ref{alg:updateFollowers}). This is done by copying the contents of the more up-to-date log to the less up-to-date log. 
+% \newpage
+\begin{lstlisting}[label={alg:catchup}, caption={Optimization: Leader Catch Up}, float=ht]
+  For every process p in confirmedFollowers
+    Read p's FUO
+    Abort if any read fails
+  F = follower with max FUO
+  if F.FUO > myFUO:
+    Copy F.LOG[myFUO: F.FUO] into my log
+    myFUO = F.FUO
+    Abort if the read fails
+\end{lstlisting}
+
+\begin{lstlisting}[label={alg:updateFollowers}, caption={Optimization: Update Followers}]
+  For every process p in confirmed followers:
+    Copy myLog[p.FUO: myFUO] into p.LOG
+    p.FUO = myFUO
+    Abort if any write fails
+\end{lstlisting}
+
+\paragraph{Followers commit in background.} In the basic algorithm, followers do not know when a value is committed and thus cannot replay the requests in the application. This is easily fixed without additional communication. Since a leader will not start replicating in an index $i$ before it knows index $i-1$ to be committed, followers can monitor their local logs and commit all values up to (but excluding) the highest non-empty log index. This is called \emph{commit piggybacking}, since the commit message is folded into the next replicated value.
+\CRExtra{As a result, followers replicate but do not commit the $(i{-}1)$-st entry until either the $i$-th entry is proposed by the current leader, or a new leader is elected and brings its followers up to date, whichever happens first.}
+
+\paragraph{Omitting the prepare phase.} Once a leader finds only empty slots at a given index at all of its confirmed followers at line~\ref{line:readVals}, then no higher index may contain an accepted value at any confirmed follower; thus, the leader may omit the prepare phase for higher indexes (until it aborts, after which the prepare phase becomes necessary again). This optimization concerns performance on the common path. With this optimization, the cost of a Propose call becomes a single RDMA write to a majority in the common case.
+
+\paragraph{Growing confirmed followers.} In the \CRExtra{algorithm so far,} the  confirmed followers set remains fixed after the leader initially constructs it. This  implies that processes outside the leader's confirmed followers set will miss updates, even if they are alive and timely, and that the leader will abort even if one of its followers crashes. \CRExtra{To avoid this problem, we extend the algorithm to allow the leader 
+%to grow its confirmed followers set by adding replicas which respond to its initial request for permission. 
+to grow its confirmed followers set by briefly waiting for responses from all replicas during its
+initial request for permission. 
+%
+The leader can also add confirmed followers later, but must bring these replicas up to date (using the mechanism described above in \textit{Bringing stragglers up to date}) before adding them to its set.}
+%
+When its confirmed follower set is large, the leader cannot wait for its RDMA reads and writes to complete at all of its confirmed followers before continuing, since we require the algorithm to continue operating despite the failure of a minority of the replicas; instead, the leader waits for just a majority of the replicas to complete. 
+%With this approach, confirmed followers cannot develop `holes' in their logs, due to the FIFOness of RDMA.
+
+%\paragraph{Multiple outstanding requests.} TBD
+
+\paragraph{Replayer.}%\label{sec:follower}
+
+%\red{Add silent teminology}
+Followers continually monitor the log for new entries. This creates a challenge: how to ensure that the follower does not read an incomplete entry that has not yet been fully written by the leader. 
+%
+We adopt a standard approach: we add an extra \textit{canary byte}  at the end of each log entry~\cite{LiuWP04,wang2017apus}. Before issuing an RDMA Write to replicate a log entry, the leader sets the entry's canary byte to a non-zero value. The follower first checks the canary and then the entry contents. In theory, it is possible that the canary gets written 
+before the other
+contents under RDMA semantics. In practice, however, NICs provide left-to-right
+semantics in certain cases (\eg, the memory region is in the same NUMA domain as the NIC),
+which ensures that the canary is written last. This assumption is made by other
+RDMA systems~\cite{dragojevic2014farm,farm2,kalia2014using,LiuWP04, wang2017apus}.
+%, and we make it too.
+%However, this assumption is not inherent in \sysname:
+Alternatively,
+  we could store a checksum of the data in the canary, and the follower 
+  could read the canary
+  and wait for the checksum to match the data.

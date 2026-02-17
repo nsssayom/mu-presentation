@@ -1,0 +1,444 @@
+\begin{thebibliography}{10}
+
+\bibitem{aguilera2018passing}
+Marcos~K. Aguilera, Naama Ben-David, Irina Calciu, Rachid Guerraoui, Erez
+  Petrank, and Sam Toueg.
+\newblock Passing messages while sharing memory.
+\newblock In {\em ACM Symposium on Principles of Distributed Computing (PODC)},
+  pages 51--60, July 2018.
+
+\bibitem{aguilera2019impact}
+Marcos~K. Aguilera, Naama Ben-David, Rachid Guerraoui, Virendra~J. Marathe, and
+  Igor Zablotchi.
+\newblock The impact of {RDMA} on agreement.
+\newblock In {\em ACM Symposium on Principles of Distributed Computing (PODC)},
+  pages 409--418, July 2019.
+
+\bibitem{ptplatest}
+Anonymous.
+\newblock 1588-2019---{IEEE} approved draft standard for a precision clock
+  synchronization protocol for networked measurement and control systems.
+\newblock
+  \url{https://standards.ieee.org/content/ieee-standards/en/standard/1588-2019.html}.
+
+\bibitem{ordermatching}
+Order matching system.
+\newblock \url{https://en.wikipedia.org/wiki/Order_matching_system}.
+
+\bibitem{mumotor}
+Anonymous.
+\newblock When microseconds count: Fast current loop innovation helps motors
+  work smarter, not harder.
+\newblock
+  \url{http://e2e.ti.com/blogs_/b/thinkinnovate/archive/2017/11/14/when-microseconds-count-fast-current-loop-innovation-helps-motors-work-smarter-not-harder}.
+
+\bibitem{mukiller}
+Luiz Barroso, Mike Marty, David Patterson, and Parthasarathy Ranganathan.
+\newblock Attack of the killer microseconds.
+\newblock {\em Communications of the ACM}, 60(4):48--54, April 2017.
+
+\bibitem{boichat2003deconstructing}
+Romain Boichat, Partha Dutta, Svend Fr{\o}lund, and Rachid Guerraoui.
+\newblock Deconstructing {Paxos}.
+\newblock {\em ACM SIGACT News}, 34(1):47--67, March 2003.
+
+\bibitem{muback}
+Sol Boucher, Anuj Kalia, and David~G. Andersen.
+\newblock Putting the ``micro'' back in microservice.
+\newblock In {\em USENIX Annual Technical Conference (ATC)}, pages 645--650,
+  July 2018.
+
+\bibitem{burrows2006chubby}
+Mike Burrows.
+\newblock The {Chubby} lock service for loosely-coupled distributed systems.
+\newblock In {\em USENIX Symposium on Operating System Design and
+  Implementation (OSDI)}, pages 335--350, November 2006.
+
+\bibitem{castro1999practical}
+Miguel Castro and Barbara Liskov.
+\newblock Practical {Byzantine} fault tolerance.
+\newblock In {\em USENIX Symposium on Operating System Design and
+  Implementation (OSDI)}, pages 173--186, February 1999.
+
+\bibitem{base}
+Miguel Castro, Rodrigo Rodrigues, and Barbara Liskov.
+\newblock {BASE}: Using abstraction to improve fault tolerance.
+\newblock {\em ACM Transactions on Computer Systems (TOCS)}, 21(3), August
+  2003.
+
+\bibitem{pml2007}
+Tushar~Deepak Chandra, Robert Griesemer, and Joshua Redstone.
+\newblock Paxos made live: An engineering perspective.
+\newblock In {\em ACM Symposium on Principles of Distributed Computing (PODC)},
+  pages 398--407, August 2007.
+
+\bibitem{chandra1996weakest}
+Tushar~Deepak Chandra, Vassos Hadzilacos, and Sam Toueg.
+\newblock The weakest failure detector for solving consensus.
+\newblock {\em Journal of the ACM (JACM)}, 43(4):685--722, July 1996.
+
+\bibitem{ClementWADM09}
+Allen Clement, Edmund~L. Wong, Lorenzo Alvisi, Michael Dahlin, and Mirco
+  Marchetti.
+\newblock Making {Byzantine} fault tolerant systems tolerate {Byzantine}
+  faults.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 153--168, April 2009.
+
+\bibitem{ClementsKZMK13}
+Austin~T. Clements, M.~Frans Kaashoek, Nickolai Zeldovich, Robert~Tappan
+  Morris, and Eddie Kohler.
+\newblock The scalable commutativity rule: designing scalable software for
+  multicore processors.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)}, pages
+  1--17, November 2013.
+
+\bibitem{conan}
+Conan, a {C/C++} package manager.
+\newblock \url{https://conan.io}.
+\newblock Accessed 2020-09-30.
+
+\bibitem{rpcvalet}
+Alexandros Daglis, Mark Sutherland, and Babak Falsafi.
+\newblock {RPCValet}: {NI}-driven tail-aware balancing of $\mu s$-scale {RPCs}.
+\newblock In {\em International Conference on Architectural Support for
+  Programming Languages and Operating Systems (ASPLOS)}, pages 35--48, April
+  2019.
+
+\bibitem{tool-cloc}
+Al~Danial.
+\newblock cloc: Count lines of code.
+\newblock \url{https://github.com/AlDanial/cloc}.
+
+\bibitem{uarch-bench}
+Travis Downs.
+\newblock A benchmark for low-level {CPU} micro-architectural features.
+\newblock \url{https://github.com/travisdowns/uarch-bench}.
+
+\bibitem{dragojevic2014farm}
+Aleksandar Dragojevi{\'c}, Dushyanth Narayanan, Miguel Castro, and Orion
+  Hodson.
+\newblock {FaRM}: Fast remote memory.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 401--414, April 2014.
+
+\bibitem{farm2}
+Aleksandar Dragojevic, Dushyanth Narayanan, Ed~Nightingale, Matthew Renzelmann,
+  Alex Shamis, Anirudh Badam, and Miguel Castro.
+\newblock No compromises: distributed transactions with consistency,
+  availability, and performance.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)},
+  October 2015.
+
+\bibitem{dutta2005fast}
+Partha Dutta, Rachid Guerraoui, and Leslie Lamport.
+\newblock How fast can eventual synchrony lead to consensus?
+\newblock In {\em International Conference on Dependable Systems and Networks
+  (DSN)}, pages 22--27, June 2005.
+
+\bibitem{gafni2003disk}
+Eli Gafni and Leslie Lamport.
+\newblock Disk paxos.
+\newblock {\em Distributed computing (DIST)}, 16(1):1--20, February 2003.
+
+\bibitem{mubench}
+Yu~Gan, Yanqi Zhang, Dailun Cheng, Ankitha Shetty, Priyal Rathi, Nayan Katarki,
+  Ariana Bruno, Justin Hu, Brian Ritchken, Brendon Jackson, Kelvin Hu, Meghna
+  Pancholi, Yuan He, Brett Clancy, Chris Colen, Fukang Wen, Catherine Leung,
+  Siyuan Wang, Leon Zaruvinsky, Mateo Espinosa, Rick Lin, Zhongling Liu, Jake
+  Padilla, and Christina Delimitrou.
+\newblock An open-source benchmark suite for microservices and their
+  hardware-software implications for cloud \& edge systems.
+\newblock In {\em International Conference on Architectural Support for
+  Programming Languages and Operating Systems (ASPLOS)}, pages 3--18, April
+  2019.
+
+\bibitem{HW90}
+Maurice~P. Herlihy and Jeannette~M. Wing.
+\newblock Linearizability: A correctness condition for concurrent objects.
+\newblock {\em ACM Transactions on Programming Languages and Systems (TOPLAS)},
+  12(3):463--492, January 1990.
+
+\bibitem{HoltBZPOC16}
+Brandon Holt, James Bornholt, Irene Zhang, Dan R.~K. Ports, Mark Oskin, and
+  Luis Ceze.
+\newblock Disciplined inconsistency with consistency types.
+\newblock In {\em Symposium on Cloud Computing (SoCC)}, pages 279--293, October
+  2016.
+
+\bibitem{hunt2010zookeeper}
+Patrick Hunt, Mahadev Konar, Flavio~Paiva Junqueira, and Benjamin Reed.
+\newblock Zookeeper: Wait-free coordination for internet-scale systems.
+\newblock In {\em USENIX Annual Technical Conference (ATC)}, June 2010.
+
+\bibitem{istvan2016consensus}
+Zsolt Istv{\'a}n, David Sidler, Gustavo Alonso, and Marko Vukolic.
+\newblock Consensus in a box: Inexpensive coordination in hardware.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 425--438, March 2016.
+
+\bibitem{derecho}
+Sagar Jha, Jonathan Behrens, Theo Gkountouvas, Matthew Milano, Weijia Song,
+  Edward Tremel, Robbert~Van Renesse, Sydney Zink, and Kenneth~P. Birman.
+\newblock Derecho: Fast state machine replication for cloud services.
+\newblock {\em ACM Transactions on Computer Systems (TOCS)}, 36(2), April 2019.
+
+\bibitem{jin2018netchain}
+Xin Jin, Xiaozhou Li, Haoyu Zhang, Nate Foster, Jeongkeun Lee, Robert
+  Soul{\'e}, Changhoon Kim, and Ion Stoica.
+\newblock Netchain: Scale-free sub-{RTT} coordination.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 35--49, April 2018.
+
+\bibitem{erpc}
+Anuj Kalia, Michael Kaminsky, and David Andersen.
+\newblock Datacenter {RPCs} can be general and fast.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 1--16, February 2019.
+
+\bibitem{kalia2014using}
+Anuj Kalia, Michael Kaminsky, and David~G Andersen.
+\newblock Using {RDMA} efficiently for key-value services.
+\newblock In {\em ACM Conference on SIGCOMM}, pages 295--306, August 2014.
+
+\bibitem{kalia2016design}
+Anuj Kalia, Michael Kaminsky, and David~G Andersen.
+\newblock Design guidelines for high performance {RDMA} systems.
+\newblock In {\em USENIX Annual Technical Conference (ATC)}, pages 437--450,
+  June 2016.
+
+\bibitem{kalia2016fasst}
+Anuj Kalia, Michael Kaminsky, and David~G Andersen.
+\newblock {FaSST}: Fast, scalable and simple distributed transactions with
+  two-sided {(RDMA)} datagram {RPC}s.
+\newblock In {\em USENIX Symposium on Operating System Design and
+  Implementation (OSDI)}, pages 185--201, November 2016.
+
+\bibitem{hermes}
+Antonios Katsarakis, Vasilis Avrielatos, M~R~Siavash Katebzadeh, Arpit Joshi,
+  Aleksandar Dragojevi\'{c}, Boris Grot, and Vijay Nagarajan.
+\newblock Hermes: A fast, fault-tolerant and linearizable replication protocol.
+\newblock In {\em International Conference on Architectural Support for
+  Programming Languages and Operating Systems (ASPLOS)}, pages 201--217, March
+  2020.
+
+\bibitem{keidar2001cost}
+Idit Keidar and Sergio Rajsbaum.
+\newblock On the cost of fault-tolerant consensus when there are no faults:
+  preliminary version.
+\newblock {\em ACM SIGACT News}, 32(2):45--63, June 2001.
+
+\bibitem{hovercraft}
+Marios Kogias and Edouard Bugnion.
+\newblock {HovercRaft}: Achieving scalability and fault-tolerance for
+  microsecond-scale datacenter services.
+\newblock In {\em European Conference on Computer Systems (EuroSys)}, April
+  2020.
+
+\bibitem{kotla2007zyzzyva}
+Ramakrishna Kotla, Lorenzo Alvisi, Mike Dahlin, Allen Clement, and Edmund Wong.
+\newblock Zyzzyva: speculative {Byzantine} fault tolerance.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)}, pages
+  45--58, October 2007.
+
+\bibitem{paxos}
+Leslie Lamport.
+\newblock The part-time parliament.
+\newblock {\em ACM Transactions on Computer Systems (TOCS)}, 16:133--169, May
+  1998.
+
+\bibitem{lamport2001paxos}
+Leslie Lamport.
+\newblock Paxos made simple.
+\newblock {\em ACM SIGACT News}, 32(4):18--25, June 2001.
+
+\bibitem{generalizedconsensus}
+Leslie Lamport.
+\newblock Generalized consensus and {Paxos}.
+\newblock Technical Report MSR-TR-2005-33, Microsoft Research, March 2005.
+
+\bibitem{lamport2006fast}
+Leslie Lamport.
+\newblock Fast paxos.
+\newblock {\em Distributed computing (DIST)}, 19(2):79--103, July 2006.
+
+\bibitem{lampson1996build}
+Butler~W Lampson.
+\newblock How to build a highly available system using consensus.
+\newblock In {\em International Workshop on Distributed Algorithms (WDAG)},
+  pages 1--17, October 1996.
+
+\bibitem{pigeon}
+Joshua~B. Leners, Trinabh Gupta, Marcos~K. Aguilera, and Michael Walfish.
+\newblock Improving availability in distributed systems with failure informers.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, April 2013.
+
+\bibitem{albatross}
+Joshua~B. Leners, Trinabh Gupta, Marcos~K. Aguilera, and Michael Walfish.
+\newblock Taming uncertainty in distributed systems with help from the network.
+\newblock In {\em European Conference on Computer Systems (EuroSys)}, April
+  2015.
+
+\bibitem{falcon}
+Joshua~B. Leners, Hao Wu, Wei-Lun Hung, Marcos~K. Aguilera, and Michael
+  Walfish.
+\newblock Detecting failures in distributed systems with the {FALCON} spy
+  network.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)},
+  October 2011.
+
+\bibitem{socksdirect}
+Bojie Li, Tianyi Cui, Zibo Wang, Wei Bai, and Lintao Zhang.
+\newblock Socksdirect: datacenter sockets can be fast and compatible.
+\newblock In {\em ACM Conference on SIGCOMM}, pages 90--103, August 2019.
+
+\bibitem{li2016just}
+Jialin Li, Ellis Michael, Naveen~Kr Sharma, Adriana Szekeres, and Dan~RK Ports.
+\newblock Just say {NO} to {Paxos} overhead: Replacing consensus with network
+  ordering.
+\newblock In {\em USENIX Symposium on Operating System Design and
+  Implementation (OSDI)}, pages 467--483, November 2016.
+
+\bibitem{liquibook}
+Liquibook.
+\newblock \url{https://github.com/enewhuis/liquibook}.
+\newblock Accessed 2020-05-25.
+
+\bibitem{LiuWP04}
+Jiuxing Liu, Jiesheng Wu, and Dhabaleswar~K. Panda.
+\newblock High performance {RDMA}-based {MPI} implementation over {InfiniBand}.
+\newblock {\em International Journal of Parallel Programming}, 32(3):167--198,
+  June 2004.
+
+\bibitem{ipipe}
+Ming Liu, Tianyi Cui, Henry Schuh, Arvind Krishnamurthy, Simon Peter, and Karan
+  Gupta.
+\newblock Offloading distributed applications onto {smartNICs} using {iPipe}.
+\newblock In {\em ACM Conference on SIGCOMM}, pages 318--333, August 2019.
+
+\bibitem{mazieres2007paxos}
+David Mazieres.
+\newblock Paxos made practical.
+\newblock \url{https://www.scs.stanford.edu/~dm/home/papers/paxos.pdf}, 2007.
+
+\bibitem{memcached}
+Memcached.
+\newblock \url{https://memcached.org/}.
+\newblock Accessed 2020-05-25.
+
+\bibitem{storm}
+Stanko Novakovic, Yizhou Shan, Aasheesh Kolli, Michael Cui, Yiying Zhang,
+  Haggai Eran, Boris Pismenny, Liran Liss, Michael Wei, Dan Tsafrir, and
+  Marcos~K. Aguilera.
+\newblock Storm: a fast transactional dataplane for remote data structures.
+\newblock In {\em ACM International Conference on Systems and Storage
+  (SYSTOR)}, pages 97--108, May 2019.
+
+\bibitem{ongaro2014search}
+Diego Ongaro and John~K Ousterhout.
+\newblock In search of an understandable consensus algorithm.
+\newblock In {\em USENIX Annual Technical Conference (ATC)}, pages 305--319,
+  June 2014.
+
+\bibitem{ramcloud}
+Diego Ongaro, Stephen~M. Rumble, Ryan Stutsman, John Ousterhout, and Mendel
+  Rosenblum.
+\newblock Fast crash recovery in {RAMCloud}.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)}, pages
+  29--41, October 2011.
+
+\bibitem{shenango}
+Amy Ousterhout, Joshua Fried, Jonathan Behrens, Adam Belay, and Hari
+  Balakrishnan.
+\newblock Shenango: Achieving high {CPU} efficiency for latency-sensitive
+  datacenter workloads.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 361--378, February 2019.
+
+\bibitem{curp}
+Seo~Jin Park and John Ousterhout.
+\newblock Exploiting commutativity for practical fast replication.
+\newblock In {\em USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, pages 47--64, February 2019.
+
+\bibitem{gbcast}
+Fernando Pedone and {Andr\'e} Schiper.
+\newblock Handling message semantics with generic broadcast protocols.
+\newblock {\em Distributed Computing}, 15(2):97--107, April 2002.
+
+\bibitem{poke2015dare}
+Marius Poke and Torsten Hoefler.
+\newblock {DARE}: High-performance state machine replication on {RDMA}
+  networks.
+\newblock In {\em Symposium on High-Performance Parallel and Distributed
+  Computing (HPDC)}, pages 107--118. ACM, June 2015.
+
+\bibitem{rsvp}
+Mary~C. Potter, Brad Wyble, Carl~Erick Hagmann, and Emily~Sarah McCourt.
+\newblock Detecting meaning in {RSVP} at 13 ms per picture.
+\newblock {\em Attention, Perception, \& Psychophysics}, 76(2):270--279,
+  February 2014.
+
+\bibitem{zygos}
+George Prekas, Marios Kogias, and Edouard Bugnion.
+\newblock {ZygOS}: Achieving low tail latency for microsecond-scale networked
+  tasks.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)}, pages
+  325--341, October 2017.
+
+\bibitem{ix}
+George Prekas, Mia Primorac, Adam Belay, Christos Kozyrakis, and Edouard
+  Bugnion.
+\newblock Energy proportionality and workload consolidation for
+  latency-critical applications.
+\newblock In {\em Symposium on Cloud Computing (SoCC)}, pages 342--355, August
+  2015.
+
+\bibitem{arachne}
+Henry Qin, Qian Li, Jacqueline Speiser, Peter Kraft, and John Ousterhout.
+\newblock Arachne: Core-aware thread management.
+\newblock In {\em USENIX Symposium on Operating System Design and
+  Implementation (OSDI)}, pages 145--160, October 2018.
+
+\bibitem{redis}
+Redis.
+\newblock \url{https://redis.io/}.
+\newblock Accessed 2020-05-25.
+
+\bibitem{mumarket}
+David Schneider.
+\newblock The microsecond market.
+\newblock {\em IEEE Spectrum}, 49(6), June 2012.
+
+\bibitem{schneider1990implementing}
+Fred~B Schneider.
+\newblock Implementing fault-tolerant services using the state machine
+  approach: A tutorial.
+\newblock {\em ACM Computing Surveys (CSUR)}, 22(4):299--319, December 1990.
+
+\bibitem{crdt}
+Marc Shapiro, Nuno Pregui{\c c}a, Carlos Baquero, and Marek Zawirski.
+\newblock Conflict-free replicated data types.
+\newblock In {\em International Symposium on Stabilization, Safety, and
+  Security of Distributed Systems (SSS)}, pages 386--400, October 2011.
+
+\bibitem{rdmapmem}
+SNIA.
+\newblock Extending {RDMA} for persistent memory over fabrics.
+\newblock
+  \url{https://www.snia.org/sites/default/files/ESF/Extending-RDMA-for-Persistent-Memory-over-Fabrics-Final.pdf}.
+
+\bibitem{wang2017apus}
+Cheng Wang, Jianyu Jiang, Xusheng Chen, Ning Yi, and Heming Cui.
+\newblock {APUS}: Fast and scalable paxos on {RDMA}.
+\newblock In {\em Symposium on Cloud Computing (SoCC)}, pages 94--107,
+  September 2017.
+
+\bibitem{wei2015fast}
+Xingda Wei, Jiaxin Shi, Yanzhe Chen, Rong Chen, and Haibo Chen.
+\newblock Fast in-memory transaction processing using {RDMA} and {HTM}.
+\newblock In {\em ACM Symposium on Operating Systems Principles (SOSP)}, pages
+  87--104, October 2015.
+
+\end{thebibliography}
