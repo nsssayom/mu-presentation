@@ -48,7 +48,31 @@
         </aside>
       </section>
 
-      <!-- ==================== 2. THE PROBLEM ==================== -->
+      <!-- ==================== 2. SMR BACKGROUND ==================== -->
+      <section>
+        <h2>State Machine Replication (SMR)</h2>
+        <ul>
+          <li>Each replica keeps a <strong>copy of the application</strong> + a <strong>log of requests</strong></li>
+          <li>Leader orders requests, replicates to a <strong>majority</strong>, replicas apply in order</li>
+          <li>Majority intersection → no two different values both "committed" for the same slot</li>
+          <li>Provides <strong>linearizability</strong>: the service behaves as one copy</li>
+        </ul>
+        <div class="callout callout-blue">
+          <strong>Classic Paxos</strong> uses increasing proposal numbers and a two-phase protocol
+          (prepare → accept) with follower responses on the critical path. Each step costs microseconds.
+        </div>
+        <aside class="notes">
+          To understand what Mu is solving, we first need to talk about state machine replication.
+
+          If you're building a distributed service and you need it to survive machine failures, the standard approach is SMR. You keep multiple copies of the service, each with its own log of client requests. A leader orders those requests, replicates them to a majority of replicas, and every replica applies them in the same order. If the application is deterministic, all replicas stay identical.
+
+          Why a majority? Because any two majorities overlap in at least one replica. That overlap prevents two different values from both being committed for the same log slot. This gives you linearizability: the service behaves as a single copy, and every operation takes effect at exactly one instant between call and return.
+
+          Classic Paxos achieves this with increasing proposal numbers and a two-phase protocol: prepare, then accept, with follower responses on the critical path. Each of those steps costs microseconds. Keep that in mind as we look at the problem.
+        </aside>
+      </section>
+
+      <!-- ==================== 3. THE PROBLEM ==================== -->
       <section>
         <h2>The Problem</h2>
         <p>Modern applications do useful work in <strong>microseconds</strong>,
@@ -101,31 +125,7 @@
         </aside>
       </section>
 
-      <!-- ==================== 4. SMR BACKGROUND ==================== -->
-      <section>
-        <h2>State Machine Replication (SMR)</h2>
-        <ul>
-          <li>Each replica keeps a <strong>copy of the application</strong> + a <strong>log of requests</strong></li>
-          <li>Leader orders requests, replicates to a <strong>majority</strong>, replicas apply in order</li>
-          <li>Majority intersection → no two different values both "committed" for the same slot</li>
-          <li>Provides <strong>linearizability</strong>: the service behaves as one copy</li>
-        </ul>
-        <div class="callout callout-blue">
-          <strong>Classic Paxos</strong> uses increasing proposal numbers and a two-phase protocol
-          (prepare → accept) with follower responses on the critical path. Each step costs microseconds.
-        </div>
-        <aside class="notes">
-          Before we get to Mu's solution, two pieces of background. First: state machine replication.
-
-          SMR is the gold standard for making a distributed service look like a single, reliable copy. Each replica keeps a copy of the application and a log of client requests. The leader orders requests, replicates them to a majority, and every replica applies entries in the same order. If the application is deterministic, all replicas stay identical.
-
-          Why a majority? Because any two majorities overlap in at least one replica. That overlap prevents two different values from both being committed for the same log slot. This gives you linearizability: the replicated service behaves as a single copy, and every operation takes effect at exactly one instant between call and return.
-
-          Classic Paxos does this with increasing proposal numbers and a two-phase protocol: prepare, then accept, with follower responses on the critical path. Each step costs microseconds. Mu's question is: can we do better?
-        </aside>
-      </section>
-
-      <!-- ==================== 5. RDMA BACKGROUND ==================== -->
+      <!-- ==================== RDMA BACKGROUND ==================== -->
       <section>
         <h2>RDMA: The Lever</h2>
         <ul>
@@ -139,7 +139,7 @@
           dynamically. A remote RDMA write succeeds or fails based on QP/MR permission state.
         </div>
         <aside class="notes">
-          Second piece of background: RDMA, Remote Direct Memory Access. This is Mu's lever.
+          Now for the second piece of background: RDMA, Remote Direct Memory Access. This is Mu's lever.
 
           RDMA gives you one-sided operations, Write and Read, that complete without the remote CPU running any receive code. The NIC transfers data directly into or out of registered memory. That's why RDMA can achieve extremely low latency and low jitter when used carefully.
 
@@ -560,7 +560,7 @@
       </section>
 
       <!-- ==================== CONSENSUS PROTOCOL ==================== -->
-      <section>
+      <!-- <section>
         <h2>Confirmed Followers &amp; The Protocol</h2>
         <p><code>confirmedFollowers</code>: replicas that granted <strong>exclusive write permission</strong> to this leader.</p>
         <ul>
@@ -587,7 +587,7 @@
 
           And the key optimization: once a leader sees only empty slots at FUO across confirmed followers, it skips the prepare phase entirely for subsequent indices. That's why the common case costs just one round of one-sided RDMA writes.
         </aside>
-      </section>
+      </section> -->
 
       <!-- ==================== PULL-SCORE ==================== -->
       <section>
@@ -830,13 +830,13 @@
       <section>
         <h2>Replication Latency</h2>
         <img src="img/exp2_replication.png" class="r-stretch">
-        <p class="caption">~1.3 μs median, ~1.6 μs p99. Faster by multiples than Hermes, DARE, APUS — with much tighter tail latency.</p>
+        <p class="caption">Mu+LiQ 1.34 μs, Mu+HERD 1.40 μs vs. DARE 5.15, Hermes 4.55, APUS ~6.8 — 3–5× faster with much tighter tail.</p>
         <aside class="notes">
-          The headline result: about 1.3 microseconds median replication latency for small in-memory requests, with about 1.6 microseconds at the 99th percentile.
+          This figure compares replication latency across systems, with Mu attached to different applications.
 
-          For payloads up to the RDMA inline threshold, 256 bytes in their setup, latency is roughly flat. Inlined RDMA avoids the extra DMA step of fetching the payload from host memory. Past 256 bytes, latency rises gradually.
+          Mu with Liquibook achieves 1.34 microseconds median. Mu with HERD is 1.40. Even with TCP-based apps like Redis and Memcached, Mu stays at 1.68 microseconds, because the replication path itself is the same regardless of what application is attached.
 
-          Compared to the baselines (Hermes, DARE, APUS), Mu is faster by multiples in the median and has much tighter tail latency. The paper attributes the competitors' longer tails to two things: involving follower CPUs in the critical path, and serializing multiple RDMA operations whose timing variances compound.
+          Now look at the baselines. DARE is at 5.15 microseconds, Hermes at 4.55, and APUS at 6.80 to 6.86. Mu is 3 to 5 times faster in the median. But the more telling difference is the error bars. Mu's tail latency is tight. The competitors show much wider spread because they involve follower CPUs in the critical path, and serializing multiple RDMA events compounds their timing variance.
         </aside>
       </section>
 
@@ -844,13 +844,15 @@
       <section>
         <h2>Standalone vs. Attached Performance</h2>
         <img src="img/exp1_usvsus.png" class="r-stretch">
-        <p class="caption">Shared-core mode adds ~400ns cache-coherence penalty per request. At μs scale, thread/core topology is a first-order design choice.</p>
+        <p class="caption">Standalone vs. attached across payload sizes. At 256 bytes (RDMA inline threshold), latency jumps. Attached mode adds cache interference that widens the gap.</p>
         <aside class="notes">
-          This figure compares standalone mode, where Mu tight-loops in isolation, versus attached mode, where it's integrated with a real application. Attached mode adds cache and scheduling interference.
+          This figure shows Mu's replication latency across different payload sizes, comparing standalone mode against Mu attached to real applications like Redis, Memcached, HERD, and Liquibook.
 
-          They also compare dedicated-core versus shared-core configurations. Sharing a core incurs about 400 nanoseconds of cache-coherence penalty per request.
+          At small sizes, 32 to 128 bytes, all modes perform similarly, around 1.29 to 1.72 microseconds. Standalone is slightly faster since there's no cache interference from a co-located application.
 
-          The takeaway: at microsecond scale, thread and core topology is a first-order design choice. A fast algorithm isn't enough. You also need to think about where threads are pinned and how cache lines bounce between cores.
+          The interesting jump happens at 256 bytes. That's the RDMA inline threshold in their setup. Below 256 bytes, the NIC can inline the payload directly into the work request, avoiding an extra DMA fetch from host memory. Past that point, latency rises more steeply, and the gap between standalone and attached widens because cache pressure from the application starts to matter more.
+
+          The takeaway: at microsecond scale, thread and core topology is a first-order design choice. A fast algorithm isn't enough. You need to think about where threads are pinned, how cache lines bounce between cores, and whether your payloads fit the inline threshold.
         </aside>
       </section>
 
@@ -860,13 +862,15 @@
         <img src="img/exp3_e2e.png" class="r-stretch">
         <p class="caption">Mu integrates via a capture/inject shim. Liquibook: 4.08 → 5.55 μs (+35%). HERD: 2.25 → 3.59 μs. Redis/Memcached: +1.5 μs negligible at ~115 μs base. For true μs apps, Mu is the only viable option.</p>
         <aside class="notes">
-          This is the more meaningful question: how does replication overhead compare to the application's own work?
+          This is the more meaningful question: how does replication overhead compare to the application's own work? The figure has three panels.
 
-          Mu plugs in through its capture-and-inject shim. Liquibook, a financial exchange matching engine, goes from 4.08 microseconds unreplicated to 5.55 microseconds with Mu. That's roughly 35% overhead. HERD, an RDMA key-value store, goes from 2.25 to 3.59 microseconds.
+          Left panel, Liquibook, a financial exchange matching engine. Unreplicated median is 4.08 microseconds, replicated with Mu it's 5.55. That's about 35% overhead.
 
-          For TCP-based systems like Redis and Memcached, the base latency is around 115 microseconds, so Mu's extra 1.5 microseconds basically vanishes in the noise.
+          Middle panel, RDMA key-value stores. HERD goes from 2.25 unreplicated to 3.59 with Mu. But look at DARE: it adds overhead all the way to 7.56 microseconds, more than tripling the unreplicated latency. Mu's overhead is far more acceptable.
 
-          The paper's message is clear: for true microsecond applications like Liquibook and HERD, even 1.3 microseconds is a meaningful fraction of total latency. But Mu is the only system in the comparison where that overhead is plausibly acceptable. Every other system adds enough that replication becomes a non-starter for these workloads.
+          Right panel, TCP-based Redis and Memcached. The base latency is already around 115 to 117 microseconds unreplicated. Mu adds only about 1.4 to 1.6 microseconds on top, which basically vanishes. APUS adds more, around 4 to 7 microseconds, but even that is small relative to the TCP baseline.
+
+          The paper's point: for true microsecond applications like Liquibook and HERD, even 1.3 microseconds is a meaningful fraction. But Mu is the only system where that overhead is plausibly acceptable. Every other system adds enough that replication becomes a non-starter for these workloads.
         </aside>
       </section>
 
@@ -876,11 +880,15 @@
         <img src="img/failover_histogram.png" class="r-stretch">
         <p class="caption">873 μs median failover — sub-millisecond. Permission switch is the dominant cost. Orders of magnitude faster than traditional SMR failover.</p>
         <aside class="notes">
-          Mu reports 873 microseconds median failover time. That's sub-millisecond, and orders of magnitude faster than traditional SMR failover, which typically takes tens to hundreds of milliseconds.
+          This figure shows two histograms side by side.
 
-          The experiment injects failure by delaying the leader until it becomes unresponsive, triggering pull-score suspicion at the followers. The paper breaks down detection time versus permission switch time, and confirms that the permission switch dominates. That's consistent with the hardware numbers we saw earlier.
+          On the left, permission switch time, centered around 230 to 235 microseconds. That's the cost of revoking the old leader's RDMA access and granting it to the new one, consistent with the QP access flag mechanism we discussed earlier.
 
-          The histogram shows failover times are tightly clustered. The system behaves predictably under failure rather than exhibiting a long tail of recovery times.
+          On the right, total failover time, centered around 870 to 875 microseconds. The difference between the two, roughly 640 microseconds, accounts for failure detection via pull-score and any catch-up overhead.
+
+          The experiment injects failure by delaying the leader until it becomes unresponsive, triggering pull-score suspicion at the followers. Total failover stays sub-millisecond, which is orders of magnitude faster than traditional SMR failover in the tens to hundreds of milliseconds range.
+
+          Both histograms are tightly clustered. The system behaves predictably under failure rather than showing a long tail of recovery times.
         </aside>
       </section>
 
@@ -888,11 +896,15 @@
       <section>
         <h2>Latency vs. Throughput</h2>
         <img src="img/exp7_latthru.png" class="r-stretch">
-        <p class="caption">Mu maintains low latency under increasing throughput, comparing favorably against baseline systems across both dimensions.</p>
+        <p class="caption">Mu's throughput–latency tradeoff with 1–8 outstanding requests and batch sizes 4–128. Peak ~48 Ops/μs at higher latency; practical configs stay in single-digit μs.</p>
         <aside class="notes">
-          This figure shows latency versus throughput. Mu maintains low latency as throughput increases, comparing well against the baselines across both dimensions.
+          This figure shows Mu's own throughput-latency tradeoff. The x-axis is throughput in operations per microsecond, the y-axis is median latency.
 
-          The key observation: Mu doesn't sacrifice throughput for low latency. It scales reasonably under increasing load. The baselines that involve follower CPUs in the critical path show steeper latency degradation as load grows.
+          Each curve represents a different number of outstanding requests: 1, 2, 4, and 8. The point labels show the batch size at each step: 4, 8, 16, 32, 64, up to 128.
+
+          With 1 or 2 outstanding requests and small batches, Mu stays around 1.5 to 2 microseconds latency at moderate throughput. As you increase batching and outstanding requests, throughput climbs toward 48 operations per microsecond, but latency rises to around 17 microseconds.
+
+          The shape is what you'd expect: more pipelining gives higher throughput at the cost of queuing delay. The important point is that Mu can sustain tens of millions of operations per second while keeping median latency in the single-digit microsecond range for practical configurations.
         </aside>
       </section>
 
