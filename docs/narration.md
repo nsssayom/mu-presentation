@@ -1,7 +1,7 @@
 # Mu Presentation — Slide-by-Slide Narration
 
-A lossless walkthrough of "Microsecond Consensus for Microsecond Applications" (OSDI 2020).
-Each section below corresponds to one slide. Deliver at a natural pace; the full narration runs approximately 35–40 minutes.
+A walkthrough of "Microsecond Consensus for Microsecond Applications" (OSDI 2020).
+Each section below corresponds to one slide. Deliver at a natural pace; the full narration runs approximately 30–35 minutes.
 
 ---
 
@@ -9,11 +9,23 @@ Each section below corresponds to one slide. Deliver at a natural pace; the full
 
 This is Mu, the Greek letter μ, from OSDI 2020. By Aguilera, Ben-David, Guerraoui, Marathe, Xygkis, and Zablotchi.
 
-The title captures the whole ambition: microsecond consensus for microsecond applications. By the end of this talk, you'll know exactly what that means, why it's hard, and how Mu pulls it off.
+The title captures the paper's ambition: microsecond consensus for microsecond applications. We'll walk through what that means, why the authors argue it's hard, and how they approach it.
 
 ---
 
-## Slide 2 — The Problem
+## Slide 2 — State Machine Replication (SMR)
+
+To understand what Mu is solving, we first need to talk about state machine replication.
+
+If you're building a distributed service and you need it to survive machine failures, the standard approach is SMR. You keep multiple copies of the service, each with its own log of client requests. A leader orders those requests, replicates them to a majority of replicas, and every replica applies them in the same order. If the application is deterministic, all replicas stay identical.
+
+Why a majority? Because any two majorities overlap in at least one replica. That overlap prevents two different values from both being committed for the same log slot. This gives you linearizability: the service behaves as a single copy, and every operation takes effect at exactly one instant between call and return.
+
+Classic Paxos achieves this with increasing proposal numbers and a two-phase protocol: prepare, then accept, with follower responses on the critical path. Each of those steps costs microseconds. Keep that in mind as we look at the problem.
+
+---
+
+## Slide 3 — The Problem
 
 Here's the problem in one sentence. Modern applications finish useful work in a few microseconds. But state machine replication adds tens to hundreds of microseconds of replication overhead, and tens to hundreds of milliseconds of failover time.
 
@@ -23,7 +35,7 @@ The paper's central claim: you can't just optimize existing protocols. You need 
 
 ---
 
-## Slide 3 — Where Microseconds Matter
+## Slide 4 — Where Microseconds Matter
 
 Why care about microsecond replication? The paper motivates this with three domains.
 
@@ -33,27 +45,15 @@ Embedded control. Microseconds equal safety. Real-time control loops can only af
 
 Microservices. Latency compounds across service graphs. If every stateful component on the critical path adds replication overhead, total round-trip time grows multiplicatively.
 
-Bottom line: if replication costs several microseconds or failover takes milliseconds, people either accept the competitive disadvantage or just skip replication entirely.
-
----
-
-## Slide 4 — State Machine Replication (SMR)
-
-Before we get to Mu's solution, two pieces of background. First: state machine replication.
-
-SMR is the gold standard for making a distributed service look like a single, reliable copy. Each replica keeps a copy of the application and a log of client requests. The leader orders requests, replicates them to a majority, and every replica applies entries in the same order. If the application is deterministic, all replicas stay identical.
-
-Why a majority? Because any two majorities overlap in at least one replica. That overlap prevents two different values from both being committed for the same log slot. This gives you linearizability: the replicated service behaves as a single copy, and every operation takes effect at exactly one instant between call and return.
-
-Classic Paxos does this with increasing proposal numbers and a two-phase protocol: prepare, then accept, with follower responses on the critical path. Each step costs microseconds. Mu's question is: can we do better?
+The paper's argument: if replication costs several microseconds or failover takes milliseconds, practitioners either accept the overhead or skip replication entirely.
 
 ---
 
 ## Slide 5 — RDMA: The Lever
 
-Second piece of background: RDMA, Remote Direct Memory Access. This is Mu's lever.
+Now for the second piece of background: RDMA, Remote Direct Memory Access. This is what the paper calls its "lever."
 
-RDMA gives you one-sided operations, Write and Read, that complete without the remote CPU running any receive code. The NIC transfers data directly into or out of registered memory. That's why RDMA can achieve extremely low latency and low jitter when used carefully.
+RDMA provides one-sided operations, Write and Read, that complete without the remote CPU running any receive code. The NIC transfers data directly into or out of registered memory. This is how RDMA achieves low latency and low jitter.
 
 But RDMA is not magic shared memory. It has a real protection model. Two objects matter here.
 
@@ -61,7 +61,7 @@ A Memory Region, or MR, is registered user memory the NIC can access. It carries
 
 A Queue Pair, or QP, is the endpoint you post RDMA work requests to. It also has access flags and goes through a state machine: RESET, INIT, RTR, RTS. Mu uses Reliable Connection transport, which provides reliable, in-order delivery between connected QP pairs.
 
-Here's the critical insight for Mu: these permissions are hardware-enforced. You can set things up so a remote peer can only write if both its QP and the target MR allow it, and you can change those permissions dynamically. A remote RDMA write either succeeds or fails based on the current permission state. That hardware enforcement is exactly what Mu will exploit.
+The property that matters for Mu: these permissions are hardware-enforced. You can set things up so a remote peer can only write if both its QP and the target MR allow it, and you can change those permissions dynamically. A remote RDMA write either succeeds or fails based on the current permission state. Mu builds its safety mechanism on top of this.
 
 ---
 
@@ -69,11 +69,11 @@ Here's the critical insight for Mu: these permissions are hardware-enforced. You
 
 Mu introduces two ideas that work together.
 
-First: silent followers. In the common case, the leader replicates by writing directly into each follower's log using one-sided RDMA. Followers do zero network communication on the fast path. No acknowledgments, no participation in the critical path at all. The paper argues this reaches the practical lower bound of what RDMA hardware can do for replication: essentially one round of one-sided operations.
+First: silent followers. In the common case, the leader replicates by writing directly into each follower's log using one-sided RDMA. Followers do zero network communication on the fast path. No acknowledgments, no participation in the critical path at all. The authors argue this approaches the practical lower bound of what RDMA hardware can do for replication: essentially one round of one-sided operations.
 
-Second: permission equals safety. Mu makes "who can write to a replica's log" an explicit invariant. Each replica grants RDMA write permission to exactly one leader at a time. So the way Mu prevents two leaders from racing isn't through proposal numbers and follower replies like Paxos. It's through hardware access control: a competing leader's writes literally fail because the NIC rejects them at the hardware level.
+Second: permission equals safety. Mu makes "who can write to a replica's log" an explicit invariant. Each replica grants RDMA write permission to exactly one leader at a time. So Mu prevents two leaders from racing not through proposal numbers and follower replies like Paxos, but through hardware access control: a competing leader's writes fail because the NIC rejects them.
 
-These two ideas together are what make microsecond replication possible while keeping the system safe.
+These two ideas together are how Mu aims to achieve microsecond replication while preserving safety.
 
 ---
 
@@ -81,11 +81,11 @@ These two ideas together are what make microsecond replication possible while ke
 
 This figure shows Mu's architecture. The system splits into two planes running on separate threads, separate QPs, and separate MRs.
 
-The replication plane is the fast path. Its only job is steady-state replication: receive a request, write it to follower logs, commit, respond. Everything about it is optimized for speed.
+The replication plane is the fast path. Its job is steady-state replication: receive a request, write it to follower logs, commit, respond.
 
-The background plane handles everything else: failure detection, leader election, permission management, and catch-up. These operations can tolerate higher latency because they happen rarely, only when something goes wrong or a replica needs to synchronize.
+The background plane handles everything else: failure detection, leader election, permission management, and catch-up. These operations can tolerate higher latency because they happen less frequently, typically when something goes wrong or a replica needs to synchronize.
 
-The key takeaway from this diagram: these two planes are isolated by design. The replication plane never blocks on background operations, and vice versa.
+The important structural point: these two planes are isolated by design. The replication plane never blocks on background operations, and vice versa.
 
 ---
 
@@ -97,7 +97,7 @@ It has four responsibilities. Failure detection, using pull-score heartbeat moni
 
 Why does this need to be separate? Because background work must never block the fast-path replication thread. If a permission change or catch-up operation stalled the replication thread, you'd lose the microsecond latency guarantee. Separate QPs keep control-plane RDMA operations from queuing behind data-plane writes. Separate MRs keep permission changes on the background region from disrupting replication MR access.
 
-This isolation isn't an optimization. At microsecond scale, it's a correctness requirement.
+The paper treats this isolation as a correctness requirement at microsecond scale, not merely an optimization.
 
 ---
 
@@ -115,7 +115,7 @@ A client request arrives. Mu uses a thin "capture and inject" shim that intercep
 
 Now the fast path runs: the leader appends the request to its next log slot, then issues RDMA writes to each follower's log. These are one-sided writes. The follower CPUs aren't involved at all. Once the leader confirms the request is on a majority (for three replicas, that's any two of three), it executes and responds to the client. Followers later notice the new entry in their own local memory and replay it.
 
-The important point: this is the practical lower bound of what RDMA can do for replication. One round of one-sided writes. You can't do less and still get majority acknowledgment.
+The authors argue this is near the practical lower bound of what RDMA can do for replication. One round of one-sided writes. It's hard to see how you could do less and still replicate to a majority.
 
 ---
 
@@ -125,11 +125,11 @@ Let me walk through this step by step.
 
 *[Click 1]* The client sends a request to the leader.
 
-*[Click 2]* The leader appends it to the local log. You can see v₁ appearing in the first slot.
+*[Click 2]* The leader appends it to the local log. You can see v1 appearing in the first slot.
 
 *[Click 3]* Now the key step. The leader fires one-sided RDMA writes to both followers' logs simultaneously. See the dashed blue lines? Those are RDMA writes going through the network. And look at the follower CPUs: they say "CPU idle, not involved." The NIC handles the memory write directly. The follower CPU never executes any code for this.
 
-*[Click 4]* Both followers now have v₁. The entry is on all three replicas, so it's committed. Total time: about 1.3 microseconds.
+*[Click 4]* Both followers now have v1. The entry is on all three replicas, so it's committed. Total time: about 1.3 microseconds.
 
 *[Click 5]* The leader executes the request and sends the response back to the client.
 
@@ -167,7 +167,7 @@ Fourth, and most important for performance: prepare omission. Once a leader sees
 
 ## Slide 14 — Part II: Safety & Leader Change (Section Divider)
 
-Now for the hard part. The normal case is elegant, but the real challenge in consensus isn't when everyone agrees on the leader. It's preventing split-brain and races between concurrent leaders during failure suspicion, network jitter, or delayed scheduling. This section covers split-brain prevention, failure detection, leader change, edge cases, and recovery.
+Now we move to the harder part. The real challenge in consensus isn't steady-state replication. It's preventing split-brain and races between concurrent leaders during failure suspicion, network jitter, or delayed scheduling. This section covers split-brain prevention, failure detection, leader change, edge cases, and recovery.
 
 ---
 
@@ -177,9 +177,9 @@ Why do concurrent leaders matter? If a leader appears slow or dead, another repl
 
 The classic fix is extra message rounds and follower promises: "I won't accept proposals with a lower number than yours." Each round adds microseconds to the critical path.
 
-Mu takes a different approach entirely. Instead of relying on follower promises, it makes unauthorized writes physically impossible. Not "the follower promises not to accept." Rather, "the NIC rejects the write because the QP doesn't have the required permission flags." Safety through hardware access control.
+Mu takes a different approach. Instead of relying on follower promises, it makes unauthorized writes physically impossible. Not "the follower promises not to accept," but "the NIC rejects the write because the QP doesn't have the required permission flags." Safety through hardware access control.
 
-This is where Mu spends its novelty budget. Not on the happy path, but on the hard case: races during failure suspicion, network jitter, and scheduling delays.
+The paper's main contribution is arguably here, not in the fast path itself, but in handling the hard case: races during failure suspicion, network jitter, and scheduling delays.
 
 ---
 
@@ -193,27 +193,11 @@ When permissions need to change during a leader transition, the would-be leader 
 
 Only after this revoke-and-grant cycle completes does the replica join the new leader's confirmed followers set. Any in-flight writes from the old leader silently fail after revocation. They just don't land.
 
-The permission switch turns out to be the dominant cost of failover: hundreds of microseconds on current NICs. We'll see the exact numbers later. But conceptually, this is the key insight: Paxos proposal numbers get replaced by hardware access control. Safety comes from the NIC, not from protocol messages.
+The permission switch turns out to be the dominant cost of failover: hundreds of microseconds on current NICs. We'll see the exact numbers later. Conceptually, the paper's argument is that Paxos proposal numbers can be replaced by hardware access control. Safety comes from the NIC, not from protocol messages.
 
 ---
 
-## Slide 17 — Confirmed Followers & The Protocol
-
-Now the consensus protocol itself. Mu maintains a set called "confirmed followers": replicas that have granted exclusive write permission to this leader and revoked it from everyone else. This is stronger than "they replied to a message." It means their NIC permissions guarantee no other leader can concurrently write their logs.
-
-Mu's propose operation looks like Paxos conceptually, but with a key twist: the leader directly reads and writes follower state through RDMA, treating follower memory as published state.
-
-The prepare-like step: RDMA-read the minimum proposal number from confirmed followers, pick a higher number, write it back, and read the slot at FUO.
-
-The accept-like step: RDMA-write the proposal number and value into the FUO slot on confirmed followers.
-
-The crucial safety condition isn't "followers responded and promised." It's: I only touch replicas whose NIC permissions guarantee no other leader can write to them while I operate.
-
-And the key optimization: once a leader sees only empty slots at FUO across confirmed followers, it skips the prepare phase entirely for subsequent indices. That's why the common case costs just one round of one-sided RDMA writes.
-
----
-
-## Slide 18 — Pull-Score Failure Detection
+## Slide 17 — Pull-Score Failure Detection
 
 How does Mu detect that a leader has failed?
 
@@ -227,7 +211,7 @@ There's also a two-layer design. The pull-score threshold handles common, brief 
 
 ---
 
-## Slide 19 — Leader Election & Fate Sharing
+## Slide 18 — Leader Election & Fate Sharing
 
 Leader election in Mu is simple in policy, careful in mechanism.
 
@@ -237,11 +221,11 @@ But there's a practical complication the paper calls fate sharing. Replication a
 
 Mu fixes this by having the election thread periodically check whether replication is actually making progress. If it isn't, the election thread stops incrementing the heartbeat counter, which causes other replicas to suspect and replace this leader.
 
-This is a good example of the paper's mindset. The correctness model comes from distributed algorithms, but microsecond behavior is often dominated by engineering pathologies, not algorithmic complexity. Fate sharing is a practical fix for a real systems problem.
+This reflects a recurring theme in the paper: at microsecond scale, system behavior is often dominated by engineering pathologies rather than algorithmic complexity. Fate sharing is a practical fix for a real systems problem.
 
 ---
 
-## Slide 20 — Leader Change Process
+## Slide 19 — Leader Change Process
 
 When a leader is suspected to have failed, the change process has five steps.
 
@@ -259,7 +243,7 @@ The figure on the right shows this visually.
 
 ---
 
-## Slide 21 — Edge Cases During Leader Change
+## Slide 20 — Edge Cases During Leader Change
 
 Leader change sounds clean on paper, but several edge cases come up.
 
@@ -275,9 +259,9 @@ The bottom line: safety doesn't depend on timing or promises. It's enforced by h
 
 ---
 
-## Slide 22 — Catch-Up & Log Recovery
+## Slide 21 — Catch-Up & Log Recovery
 
-Catch-up and log recovery are what make Mu a complete SMR system, not just a clever fast-path trick.
+Catch-up and log recovery are what make Mu a complete SMR system rather than just a fast-path optimization.
 
 When a new leader takes over, all replicas need to be consistent. The catch-up process: RDMA-read the FUO from each confirmed follower, copy missing entries from the most advanced follower, then push what's missing to lagging followers and align their FUOs. Without this, any replica outside the confirmed set would drift indefinitely.
 
@@ -287,7 +271,7 @@ The zeroing step matters more than it looks. The canary byte mechanism depends o
 
 ---
 
-## Slide 23 — Permission Switch Mechanisms
+## Slide 22 — Permission Switch Mechanisms
 
 Here's something the paper discovered is a surprising bottleneck: the cost of changing RDMA permissions.
 
@@ -301,108 +285,108 @@ QP state cycling, transitioning through RESET and back to RTS, is robust regardl
 
 Mu uses a fast-then-slow strategy: try the fast QP flag change first. If it errors because operations were in flight, fall back to the robust QP state cycle.
 
-This isn't just an implementation detail. It's part of the paper's broader point: microsecond SMR hits hardware control-plane costs that traditional systems never worried about. The fast path runs in microseconds, but leader changes are bounded by what NIC firmware and driver stacks are optimized for.
+This speaks to a broader observation in the paper: microsecond SMR hits hardware control-plane costs that traditional systems never had to worry about. The fast path runs in microseconds, but leader changes are bounded by what NIC firmware and driver stacks are designed for.
 
 ---
 
-## Slide 24 — Part III: Evaluation (Section Divider)
+## Slide 23 — Part III: Evaluation (Section Divider)
 
 Let's look at how Mu performs in practice. The evaluation uses a four-node cluster with 100 Gbps InfiniBand, dual Xeon E5-2640 v4 CPUs, Ubuntu 18.04, and Mellanox OFED drivers. They evaluate three-way replication.
 
 ---
 
-## Slide 25 — Replication Latency
+## Slide 24 — Replication Latency
 
-The headline result: about 1.3 microseconds median replication latency for small in-memory requests, with about 1.6 microseconds at the 99th percentile.
+This figure compares replication latency across systems, with Mu attached to different applications.
 
-For payloads up to the RDMA inline threshold, 256 bytes in their setup, latency is roughly flat. Inlined RDMA avoids the extra DMA step of fetching the payload from host memory. Past 256 bytes, latency rises gradually.
+Mu with Liquibook reports 1.34 microseconds median. Mu with HERD is 1.40. With TCP-based apps like Redis and Memcached, Mu stays at 1.68 microseconds, since the replication path is the same regardless of what application is attached.
 
-Compared to the baselines (Hermes, DARE, APUS), Mu is faster by multiples in the median and has much tighter tail latency. The paper attributes the competitors' longer tails to two things: involving follower CPUs in the critical path, and serializing multiple RDMA operations whose timing variances compound.
-
----
-
-## Slide 26 — Standalone vs. Attached Performance
-
-This figure compares standalone mode, where Mu tight-loops in isolation, versus attached mode, where it's integrated with a real application. Attached mode adds cache and scheduling interference.
-
-They also compare dedicated-core versus shared-core configurations. Sharing a core incurs about 400 nanoseconds of cache-coherence penalty per request.
-
-The takeaway: at microsecond scale, thread and core topology is a first-order design choice. A fast algorithm isn't enough. You also need to think about where threads are pinned and how cache lines bounce between cores.
+The baselines: DARE is at 5.15 microseconds, Hermes at 4.55, and APUS at 6.80 to 6.86. So Mu is roughly 3 to 5 times faster in the median. The error bars also differ noticeably. Mu shows a tighter tail, while the other systems show wider spread, likely because they involve follower CPUs in the critical path, and serializing multiple RDMA events compounds timing variance.
 
 ---
 
-## Slide 27 — End-to-End Application Latency
+## Slide 25 — Standalone vs. Attached Performance
 
-This is the more meaningful question: how does replication overhead compare to the application's own work?
+This figure shows Mu's replication latency across different payload sizes, comparing standalone mode against Mu attached to real applications like Redis, Memcached, HERD, and Liquibook.
 
-Mu plugs in through its capture-and-inject shim. Liquibook, a financial exchange matching engine, goes from 4.08 microseconds unreplicated to 5.55 microseconds with Mu. That's roughly 35% overhead. HERD, an RDMA key-value store, goes from 2.25 to 3.59 microseconds.
+At small sizes, 32 to 128 bytes, all modes perform similarly, around 1.29 to 1.72 microseconds. Standalone is slightly faster since there's no cache interference from a co-located application.
 
-For TCP-based systems like Redis and Memcached, the base latency is around 115 microseconds, so Mu's extra 1.5 microseconds basically vanishes in the noise.
+The interesting jump happens at 256 bytes. That's the RDMA inline threshold in their setup. Below 256 bytes, the NIC can inline the payload directly into the work request, avoiding an extra DMA fetch from host memory. Past that point, latency rises more steeply, and the gap between standalone and attached widens because cache pressure from the application starts to matter more.
 
-The paper's message is clear: for true microsecond applications like Liquibook and HERD, even 1.3 microseconds is a meaningful fraction of total latency. But Mu is the only system in the comparison where that overhead is plausibly acceptable. Every other system adds enough that replication becomes a non-starter for these workloads.
-
----
-
-## Slide 28 — Failover Performance
-
-Mu reports 873 microseconds median failover time. That's sub-millisecond, and orders of magnitude faster than traditional SMR failover, which typically takes tens to hundreds of milliseconds.
-
-The experiment injects failure by delaying the leader until it becomes unresponsive, triggering pull-score suspicion at the followers. The paper breaks down detection time versus permission switch time, and confirms that the permission switch dominates. That's consistent with the hardware numbers we saw earlier.
-
-The histogram shows failover times are tightly clustered. The system behaves predictably under failure rather than exhibiting a long tail of recovery times.
+What this suggests: at microsecond scale, thread and core topology becomes a first-order design choice. A fast algorithm alone isn't sufficient. You also need to think about where threads are pinned, how cache lines bounce between cores, and whether your payloads fit the inline threshold.
 
 ---
 
-## Slide 29 — Latency vs. Throughput
+## Slide 26 — End-to-End Application Latency
 
-This figure shows latency versus throughput. Mu maintains low latency as throughput increases, comparing well against the baselines across both dimensions.
+This addresses a more practical question: how does replication overhead compare to the application's own work? The figure has three panels.
 
-The key observation: Mu doesn't sacrifice throughput for low latency. It scales reasonably under increasing load. The baselines that involve follower CPUs in the critical path show steeper latency degradation as load grows.
+Left panel, Liquibook, a financial exchange matching engine. Unreplicated median is 4.08 microseconds, replicated with Mu it's 5.55. That's about 35% overhead.
 
----
+Middle panel, RDMA key-value stores. HERD goes from 2.25 unreplicated to 3.59 with Mu. DARE, by contrast, adds overhead up to 7.56 microseconds, more than tripling the unreplicated latency.
 
-## Slide 30 — What Mu Achieves
+Right panel, TCP-based Redis and Memcached. The base latency is already around 115 to 117 microseconds unreplicated. Mu adds about 1.4 to 1.6 microseconds, which is negligible relative to the TCP baseline. APUS adds more, around 4 to 7 microseconds, but that's still small in proportion.
 
-Let's step back and summarize what Mu achieves.
-
-About 1.3 microseconds median replication latency. 873 microseconds median failover. Both are the best numbers in the comparison.
-
-In the common case, it's near the RDMA lower bound: one round of one-sided writes. That's essentially the minimum you can do while still getting majority replication.
-
-It provides linearizability through hardware-enforced single-writer permissions, not through protocol-level quorum responses.
-
-It integrates with real applications: Liquibook, HERD, Redis, Memcached. This isn't a simulation or a theoretical exercise.
-
-And it's complete SMR. Leader change, log recycling, catch-up. Not a fast-path demo, but a system that handles the full lifecycle of replication.
+The authors' argument: for true microsecond applications like Liquibook and HERD, even 1.3 microseconds matters. Among the systems compared, Mu has the lowest overhead for these workloads. Whether that overhead is acceptable depends on the application's tolerance, but the other systems in this comparison add considerably more.
 
 ---
 
-## Slide 31 — Limitations & Open Questions
+## Slide 27 — Failover Performance
 
-The paper is upfront about its limitations.
+This figure shows two histograms side by side.
 
-RDMA is required. This targets datacenter and LAN environments with InfiniBand or RoCE. Not applicable to WAN.
+On the left, permission switch time, centered around 230 to 235 microseconds. That's the cost of revoking the old leader's RDMA access and granting it to the new one, consistent with the QP access flag mechanism we discussed earlier.
 
-It's in-memory only. No durable logging to stable storage. The paper mentions persistent memory as a future direction.
+On the right, total failover time, centered around 870 to 875 microseconds. The difference between the two, roughly 640 microseconds, accounts for failure detection via pull-score and any catch-up overhead.
+
+The experiment injects failure by delaying the leader until it becomes unresponsive, triggering pull-score suspicion at the followers. Total failover stays sub-millisecond, compared to the tens to hundreds of milliseconds typical in traditional SMR systems.
+
+Both histograms are tightly clustered, suggesting predictable behavior under failure rather than a long tail of recovery times.
+
+---
+
+## Slide 28 — What Mu Achieves
+
+Let's step back and summarize what Mu reports.
+
+About 1.3 microseconds median replication latency. 873 microseconds median failover. These are the lowest numbers among the systems compared in the paper.
+
+In the common case, it approaches the RDMA lower bound: one round of one-sided writes, which is close to the minimum needed for majority replication.
+
+It provides linearizability through hardware-enforced single-writer permissions rather than protocol-level quorum responses.
+
+It integrates with real applications: Liquibook, HERD, Redis, Memcached. And it covers the full SMR lifecycle: leader change, log recycling, catch-up, not just the fast path.
+
+---
+
+## Slide 29 — Limitations & Open Questions
+
+Some limitations worth noting.
+
+RDMA is required. This targets datacenter and LAN environments with InfiniBand or RoCE. It doesn't apply to WAN deployments.
+
+It's in-memory only. There's no durable logging to stable storage. The paper mentions persistent memory as a future direction.
 
 Permission switching costs hundreds of microseconds on current NICs. The fast-slow QP strategy helps, but the fundamental cost is a hardware control-plane bottleneck.
 
-The canary byte scheme relies on certain NIC and NUMA placement conditions for left-to-right visibility ordering. The paper sketches a checksum alternative for robustness across hardware, but that adds cost.
+The canary byte scheme relies on certain NIC and NUMA placement conditions for left-to-right visibility ordering. A checksum alternative is discussed for robustness across hardware, but that adds cost.
 
-The broader point: Mu shifts work from the network data plane to the RDMA control plane. The fast path is microseconds, but the slow path is bounded by what NIC firmware and drivers are optimized for today.
+More broadly, Mu shifts work from the network data plane to the RDMA control plane. The fast path is microseconds, but the slow path is bounded by what NIC firmware and drivers are designed for today.
 
 ---
 
-## Slide 32 — The Bigger Picture
+## Slide 30 — Our Take
 
-Where does Mu sit in the bigger picture?
+Let me share our overall impression of the paper.
 
-The key contribution is conceptual: treating RDMA's access control as a distributed systems primitive. Not just using RDMA as faster transport, but using its permission model as the core mechanism for preventing split-brain. Others had explored RDMA for replication before, but Mu pushes the idea all the way into a complete SMR system with leader change, log recycling, and real application integration.
+What I liked. The core idea of using RDMA write permissions as a distributed systems safety primitive is genuinely creative. Others had used RDMA for faster replication, but treating the NIC's access control as the mechanism for preventing split-brain is a real conceptual contribution. I also appreciate that this is a complete system. It doesn't stop at the fast path. It covers leader change, catch-up, log recycling, and real application integration. And the paper is honest about its hardware costs, like the permission switch latency and the canary byte assumptions. That kind of transparency is refreshing.
 
-Pull-score is also worth highlighting. It confronts a practical truth: microsecond failover is usually dominated by jitter sensitivity, not algorithmic complexity. Polling a counter over RDMA changes how delay manifests, which lets you lower detection thresholds without constant false elections.
+Where I have questions. First, generality. The entire approach depends on RDMA hardware, which limits deployment to InfiniBand or RoCE-equipped clusters. It's not clear how the ideas translate beyond that context. Second, durability. The system is in-memory only. For the motivating use cases like financial trading, you'd likely want durable replication, and the paper leaves that for future work. Third, the evaluation baselines. DARE, Hermes, and APUS were reasonable comparisons at the time, but they're not the newest systems. It's fair to wonder whether the performance gap would narrow with more recent RDMA-based approaches.
 
-The field kept moving after Mu. Acuerdo at ICPP 2022 optimized quorum behavior for RDMA-based atomic broadcast. NetLR at VLDB 2022 explored in-network replication. Nezha at VLDB 2023 tackled deployability and performance tradeoffs. OSDI 2023 work addressed the durability gap with persistent-memory replication over RDMA.
+Overall, I think it's a strong systems paper that moves the needle on what's possible with RDMA-based consensus, while leaving some legitimate open questions about scope and assumptions.
 
-The most honest summary: Mu demonstrates that near-microsecond SMR is feasible when you exploit one-sided RDMA for the fast path and use RDMA permissions for safety. But it also exposes the next set of bottlenecks: permission-switch control-plane costs, durability, and deployment beyond RDMA-equipped datacenters.
+---
 
-Thank you.
+## Slide 31 — Thank You
+
+Thank you. Happy to take questions.
